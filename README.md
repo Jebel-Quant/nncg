@@ -59,12 +59,12 @@ A, b, x_star, _ = make_problem(n=200, kappa=1e4, seed=0)
 res = solve_nnqp(A, b)
 assert res.converged                      # KKT certificate reached
 assert np.allclose(res.x, x_star, atol=1e-6)
-print(res.outer, res.inner)               # single-digit outer steps
+assert res.outer < 10                     # single-digit outer steps
 
 # equality-augmented: minimise subject to x >= 0 and B x = c
 B = np.ones((1, 200))                     # p = 1: the budget 1'x = 1
 res_eq = solve_nnqp_eq(A, b, B, np.array([1.0]))
-print(res_eq.lam)                         # multiplier(s), via a p-by-p Schur solve
+assert res_eq.lam.shape == (1,)           # multiplier, via a p-by-p Schur solve
 
 # warm-start a parametric sweep: support-stable steps take ONE outer step
 res2 = solve_nnqp(A, b + 1e-4, warm=(res.free, res.x))
