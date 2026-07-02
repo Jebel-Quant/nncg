@@ -12,9 +12,8 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import numpy as np
-from numpy.typing import NDArray
+from cvx.linalg import Vector
 
-Vector = NDArray[np.float64]
 MatVec = Callable[[Vector], Vector]
 
 

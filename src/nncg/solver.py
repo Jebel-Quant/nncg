@@ -15,20 +15,24 @@ accompanying paper). See https://github.com/Jebel-Quant/mean_variance_solvers.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
+from cvx.linalg import Matrix, Vector, cholesky_solve
 from numpy.typing import NDArray
 
-from .krylov import cg, pcg
-
-Vector = NDArray[np.float64]
-Matrix = NDArray[np.float64]
+from .krylov import MatVec, cg, pcg
 
 
-def _matvec(m: Matrix) -> Callable[[Vector], Vector]:
-    """Bind the free-block operator ``v -> M v`` for the inner solver."""
+def _matvec(m: Matrix) -> MatVec:
+    """Return the matrix-free action ``v -> m @ v`` of the reduced operator.
+
+    Args:
+        m: The reduced matrix ``A_FF``.
+
+    Returns:
+        A callable computing ``m @ v``.
+    """
     return lambda v: m @ v
 
 
@@ -151,7 +155,7 @@ def solve_nnqp(
         a_ff = a[np.ix_(idx, idx)]  # sliced view drives the matrix-free mat-vec
         x0 = x_guess[idx] if x_guess is not None else None
         if inner == "exact":
-            xf, k_step = np.linalg.solve(a_ff, b[idx]), 1
+            xf, k_step = cholesky_solve(a_ff, b[idx]), 1
         elif inner == "pcg":
             xf, k_step = pcg(_matvec(a_ff), b[idx], 1.0 / np.diag(a_ff), tol=cg_tol, maxit=cg_maxit)
         else:
@@ -251,7 +255,7 @@ def solve_nnqp_eq(
         inner_total += k0 + k_cols
 
         schur = b_f @ v1  # p-by-p Schur complement, SPD
-        lam = np.linalg.solve(schur, c_eq - b_f @ v0)
+        lam = cholesky_solve(schur, c_eq - b_f @ v0)
         xf = v0 + v1 @ lam  # x_F = A_F^{-1}(b_F + B_F^T lambda)
         x = np.zeros(n)
         x[idx] = xf

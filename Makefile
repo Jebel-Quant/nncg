@@ -8,3 +8,6 @@ MKDOCS_EXTRA_PACKAGES = --with 'mkdocstrings[python]'
 
 # Always include the Rhiza API (template-managed)
 include .rhiza/rhiza.mk
+
+# Optional machine-local overrides and extra targets (not committed)
+-include local.mk
