@@ -15,6 +15,7 @@ accompanying paper). See https://github.com/Jebel-Quant/mean_variance_solvers.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
@@ -33,6 +34,11 @@ def _matvec(m: Matrix) -> MatVec:
     Returns:
         A callable computing ``m @ v``.
     """
+    return lambda v: m @ v
+
+
+def _matvec(m: Matrix) -> Callable[[Vector], Vector]:
+    """Bind the free-block operator ``v -> M v`` for the inner solver."""
     return lambda v: m @ v
 
 
