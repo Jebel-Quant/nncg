@@ -18,12 +18,22 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+from cvx.linalg import Matrix, Vector, cholesky_solve
 from numpy.typing import NDArray
 
-from .krylov import cg, pcg
+from .krylov import MatVec, cg, pcg
 
-Vector = NDArray[np.float64]
-Matrix = NDArray[np.float64]
+
+def _matvec(m: Matrix) -> MatVec:
+    """Return the matrix-free action ``v -> m @ v`` of the reduced operator.
+
+    Args:
+        m: The reduced matrix ``A_FF``.
+
+    Returns:
+        A callable computing ``m @ v``.
+    """
+    return lambda v: m @ v
 
 
 @dataclass(frozen=True)
@@ -145,11 +155,11 @@ def solve_nnqp(
         a_ff = a[np.ix_(idx, idx)]  # sliced view drives the matrix-free mat-vec
         x0 = x_guess[idx] if x_guess is not None else None
         if inner == "exact":
-            xf, k_step = np.linalg.solve(a_ff, b[idx]), 1
+            xf, k_step = cholesky_solve(a_ff, b[idx]), 1
         elif inner == "pcg":
-            xf, k_step = pcg(lambda v, m=a_ff: m @ v, b[idx], 1.0 / np.diag(a_ff), tol=cg_tol, maxit=cg_maxit)
+            xf, k_step = pcg(_matvec(a_ff), b[idx], 1.0 / np.diag(a_ff), tol=cg_tol, maxit=cg_maxit)
         else:
-            xf, k_step = cg(lambda v, m=a_ff: m @ v, b[idx], tol=cg_tol, maxit=cg_maxit, x0=x0)
+            xf, k_step = cg(_matvec(a_ff), b[idx], tol=cg_tol, maxit=cg_maxit, x0=x0)
         outer += 1
         inner_total += k_step
 
@@ -235,17 +245,17 @@ def solve_nnqp_eq(
         idx = np.flatnonzero(free)
         a_ff = a[np.ix_(idx, idx)]
         b_f = b_eq[:, idx]
-        v0, k0 = cg(lambda v, m=a_ff: m @ v, b[idx], tol=cg_tol)
+        v0, k0 = cg(_matvec(a_ff), b[idx], tol=cg_tol)
         v1 = np.zeros((idx.size, p))
         k_cols = 0
         for j in range(p):
-            v1[:, j], kj = cg(lambda v, m=a_ff: m @ v, b_f[j], tol=cg_tol)
+            v1[:, j], kj = cg(_matvec(a_ff), b_f[j], tol=cg_tol)
             k_cols += kj
         outer += 1
         inner_total += k0 + k_cols
 
         schur = b_f @ v1  # p-by-p Schur complement, SPD
-        lam = np.linalg.solve(schur, c_eq - b_f @ v0)
+        lam = cholesky_solve(schur, c_eq - b_f @ v0)
         xf = v0 + v1 @ lam  # x_F = A_F^{-1}(b_F + B_F^T lambda)
         x = np.zeros(n)
         x[idx] = xf

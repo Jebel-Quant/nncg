@@ -37,7 +37,13 @@ changes are overwritten on the next sync. Repo-owned files are `Makefile`,
 
 ## Conventions
 
-- NumPy is the only runtime dependency; keep it that way.
+- Runtime dependencies are NumPy and `cvx-linalg` (the Jebel-Quant linear
+  algebra package: shared `Matrix`/`Vector` aliases, `cholesky_solve` for the
+  SPD direct solves). Do not add others. The matrix-free CG/PCG in
+  `krylov.py` stays in-house: `cvx-linalg`'s `solve_free`/`bordered_solve`
+  are direct factorisations, and the CG inner solver is this package's core
+  contribution.
 - All public functions carry full docstrings and type hints (CI gates on
   both).
-- `make test`, `make lint`, `make fmt` — see `make help` for the full menu.
+- `make test`, `make fmt`, `make typecheck`, `make deptry` — see `make help`
+  for the full menu.

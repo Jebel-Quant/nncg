@@ -11,10 +11,7 @@ any bound-constrained QP solver.
 from __future__ import annotations
 
 import numpy as np
-from numpy.typing import NDArray
-
-Vector = NDArray[np.float64]
-Matrix = NDArray[np.float64]
+from cvx.linalg import Matrix, Vector
 
 
 def make_problem(

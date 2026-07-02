@@ -16,6 +16,19 @@ wheels = [
 ]
 
 [[package]]
+name = "cvx-linalg"
+version = "0.9.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ab/55/796fc4b37604df6cd2276eec94c0e32202b5c5c6af22fedee3b666639d10/cvx_linalg-0.9.4.tar.gz", hash = "sha256:1a42f6647546e1b70360920d89456689f682b8b8158bd7cc87eb34808af6ae0b", size = 38664, upload-time = "2026-07-02T12:57:24.474Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6f/dd/80f604c738a0670c58a56062e1f3c220902cd563ccb77700cd517ff5ac3a/cvx_linalg-0.9.4-py3-none-any.whl", hash = "sha256:b38e2ff993a0680fd40f1f652e4726fb7e11477cc3fd740d3456c62001ca53df", size = 48641, upload-time = "2026-07-02T12:57:22.881Z" },
+]
+
+[[package]]
 name = "iniconfig"
 version = "2.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -29,6 +42,7 @@ name = "nncg"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "cvx-linalg" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
@@ -40,7 +54,10 @@ test = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "numpy", specifier = ">=2.0.0" }]
+requires-dist = [
+    { name = "cvx-linalg", specifier = ">=0.9.4" },
+    { name = "numpy", specifier = ">=2.0.0" },
+]
 
 [package.metadata.requires-dev]
 dev = []

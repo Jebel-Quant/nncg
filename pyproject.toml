@@ -13,6 +13,7 @@ classifiers = [
 ]
 
 dependencies = [
+    "cvx-linalg>=0.9.4",
     "numpy>=2.0.0",
 ]
 
@@ -51,3 +52,4 @@ ignore-nested-classes = true
 
 [tool.deptry.package_module_name_map]
 numpy = "numpy"
+cvx-linalg = "cvx"
