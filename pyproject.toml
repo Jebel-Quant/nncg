@@ -1,0 +1,53 @@
+[project]
+name = "nncg"
+version = "0.1.0"
+description = "Non-negative conjugate gradients: bound-constrained SPD quadratics by a guarded active-set loop"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+classifiers = [
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "License :: OSI Approved :: MIT License",
+]
+
+dependencies = [
+    "numpy>=2.0.0",
+]
+
+authors = [{name = "Thomas Schmelzer", email = "thomas.schmelzer@gmail.com"},
+           {name = "Martin Stoll", email = "martin.stoll@mathematik.tu-chemnitz.de"}]
+
+[project.urls]
+Homepage = "https://github.com/Jebel-Quant/nncg"
+Repository = "https://github.com/Jebel-Quant/nncg"
+Paper = "https://github.com/Jebel-Quant/mean_variance_solvers"
+
+[dependency-groups]
+dev = []
+test = [
+    "pytest>=7.0",
+    "pytest-timeout>=2.3",
+]
+lint = []
+
+# make a fresh `uv run pytest` work without knowing about dependency groups
+[tool.uv]
+default-groups = ["dev", "test"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nncg"]
+
+[tool.interrogate]
+# Nested helpers defined inside tests are throwaway implementation detail,
+# not documented API.
+ignore-nested-functions = true
+ignore-nested-classes = true
+
+[tool.deptry.package_module_name_map]
+numpy = "numpy"

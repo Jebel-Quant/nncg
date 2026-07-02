@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite both the software and the paper (preferred-citation)."
+title: "nncg: Non-Negative Conjugate Gradients"
+type: software
+authors:
+  - family-names: Schmelzer
+    given-names: Thomas
+  - family-names: Stoll
+    given-names: Martin
+repository-code: "https://github.com/Jebel-Quant/nncg"
+license: MIT
+preferred-citation:
+  type: report
+  title: "Non-Negative Conjugate Gradients"
+  authors:
+    - family-names: Schmelzer
+      given-names: Thomas
+    - family-names: Stoll
+      given-names: Martin
+  year: 2026
+  institution:
+    name: "Jebel Quant Research and TU Chemnitz"
+  url: "https://github.com/Jebel-Quant/mean_variance_solvers"

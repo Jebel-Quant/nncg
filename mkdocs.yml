@@ -1,0 +1,23 @@
+INHERIT: docs/mkdocs-base.yml
+
+site_name: nncg
+site_url: https://www.cvxgrp.org/nncg/
+repo_url: https://github.com/cvxgrp/nncg
+repo_name: cvxgrp/nncg
+
+docs_dir: docs
+
+theme:
+  name: material
+  logo: assets/rhiza-logo.svg
+  favicon: assets/rhiza-logo.svg
+
+nav:
+  - Home: index.md
+  - Factor backend: factor.md
+  - Notebooks:
+    - CLA: notebooks/cla.html
+    - Factor: notebooks/factor.html
+  - Reports:
+    - Test Report: reports/html-report/report.html
+    - Coverage Report: reports/html-coverage/index.html

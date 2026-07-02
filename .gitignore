@@ -1,0 +1,141 @@
+ocaml
+
+### Python template
+.idea
+.venv
+.ruff_cache
+.ty_cache
+
+# HTML outputs from docstring examples (e.g. report.save("output/..."))
+output/
+
+### Don't expose API keys, etc.
+.env
+
+__marimo__
+
+_tests
+_book
+_pdoc
+docs/notebooks/*.html
+docs/reports
+docs/reports.md
+_marimushka
+_mkdocs
+_benchmarks
+_jupyter
+_site
+
+# LaTeX build artifacts
+docs/paper/cla.pdf
+docs/paper/*.aux
+docs/paper/*.fdb_latexmk
+docs/paper/*.fls
+docs/paper/*.log
+docs/paper/*.out
+docs/paper/*.toc
+docs/statsci_note/perspective.pdf
+docs/statsci_note/*.aux
+docs/statsci_note/*.fdb_latexmk
+docs/statsci_note/*.fls
+docs/statsci_note/*.log
+docs/statsci_note/*.out
+docs/statsci_note/*.toc
+
+# monograph drafts and reference PDFs (kept local)
+docs/monograph/
+
+# book prospectus (kept local)
+docs/prospectus.md
+
+# temp file used by Junie
+.output.txt
+
+# folder used for programs, e.g. uv, uvx, task, etc.
+bin
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Generated presentation files
+presentation.html
+presentation.pdf
+*.pptx
+
+# C extensions
+*.so
+
+# .DS_Store
+.DS_Store
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+coverage.json
+*.cover
+*.py,cover
+.hypothesis/
+.benchmarks/
+.pytest_cache/
+cover/
+
+# Security scanning baselines (regenerate as needed)
+.bandit-baseline.json
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Cython debug symbols
+cython_debug/
+
+# Makefile
+local.mk
+
+.bandit-baseline.json
+
+# mutmut mutation testing cache
+.mutmut-cache
+
