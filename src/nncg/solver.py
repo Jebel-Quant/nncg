@@ -251,7 +251,7 @@ def solve_nnqp_eq(
         inner_total += k0 + k_cols
 
         schur = b_f @ v1  # p-by-p Schur complement, SPD
-        lam = np.linalg.solve(schur, c_eq - b_f @ v0)
+        lam = np.linalg.solve(schur, c_eq - b_f @ v0).astype(np.float64, copy=False)
         xf = v0 + v1 @ lam  # x_F = A_F^{-1}(b_F + B_F^T lambda)
         x = np.zeros(n)
         x[idx] = xf

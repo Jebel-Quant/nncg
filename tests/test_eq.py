@@ -17,6 +17,7 @@ def test_recovers_planted_eq_optimum(p: int, kappa: float) -> None:
     assert np.linalg.norm(b_eq @ res.x - c_eq) < 1e-9  # feasible to machine precision
     assert res.lam is not None
     assert res.lam.shape == (p,)
+    assert res.lam.dtype == np.float64
 
 
 def test_p_one_is_the_single_normalisation() -> None:
