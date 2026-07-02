@@ -15,6 +15,7 @@ accompanying paper). See https://github.com/Jebel-Quant/mean_variance_solvers.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
@@ -24,6 +25,11 @@ from .krylov import cg, pcg
 
 Vector = NDArray[np.float64]
 Matrix = NDArray[np.float64]
+
+
+def _matvec(m: Matrix) -> Callable[[Vector], Vector]:
+    """Bind the free-block operator ``v -> M v`` for the inner solver."""
+    return lambda v: m @ v
 
 
 @dataclass(frozen=True)
@@ -147,9 +153,9 @@ def solve_nnqp(
         if inner == "exact":
             xf, k_step = np.linalg.solve(a_ff, b[idx]), 1
         elif inner == "pcg":
-            xf, k_step = pcg(lambda v, m=a_ff: m @ v, b[idx], 1.0 / np.diag(a_ff), tol=cg_tol, maxit=cg_maxit)
+            xf, k_step = pcg(_matvec(a_ff), b[idx], 1.0 / np.diag(a_ff), tol=cg_tol, maxit=cg_maxit)
         else:
-            xf, k_step = cg(lambda v, m=a_ff: m @ v, b[idx], tol=cg_tol, maxit=cg_maxit, x0=x0)
+            xf, k_step = cg(_matvec(a_ff), b[idx], tol=cg_tol, maxit=cg_maxit, x0=x0)
         outer += 1
         inner_total += k_step
 
@@ -235,11 +241,11 @@ def solve_nnqp_eq(
         idx = np.flatnonzero(free)
         a_ff = a[np.ix_(idx, idx)]
         b_f = b_eq[:, idx]
-        v0, k0 = cg(lambda v, m=a_ff: m @ v, b[idx], tol=cg_tol)
+        v0, k0 = cg(_matvec(a_ff), b[idx], tol=cg_tol)
         v1 = np.zeros((idx.size, p))
         k_cols = 0
         for j in range(p):
-            v1[:, j], kj = cg(lambda v, m=a_ff: m @ v, b_f[j], tol=cg_tol)
+            v1[:, j], kj = cg(_matvec(a_ff), b_f[j], tol=cg_tol)
             k_cols += kj
         outer += 1
         inner_total += k0 + k_cols
