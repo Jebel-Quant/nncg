@@ -353,6 +353,7 @@ def solve_nnqp_eq(
     tol: float = 1e-8,
     cg_tol: float = 1e-10,
     p_max: int = 3,
+    warm: tuple[NDArray[np.bool_], Vector] | None = None,
 ) -> Result:
     """Solve ``min 1/2 x^T A x - b^T x`` subject to ``x >= 0`` and ``B x = c``.
 
@@ -372,6 +373,12 @@ def solve_nnqp_eq(
         tol: Threshold of the primal and dual violator tests.
         cg_tol: Relative residual tolerance of the inner CG solves.
         p_max: Patience budget of the batch fast path.
+        warm: Optional ``(free_mask, x_prev)`` pair from a previous solve —
+            the same tuple :func:`solve_nnqp` accepts. Starts the loop from
+            that free set and seeds the ``v0`` solve of every saddle step
+            from the newest iterate; the ``v1`` columns are re-solved cold.
+            Across a support-stable parameter step the loop then terminates
+            in a single outer step.
 
     Returns:
         A :class:`Result` with the multipliers in ``lam``. The reduced
@@ -385,11 +392,11 @@ def solve_nnqp_eq(
     _check_dimension(op, b)
     p = b_eq.shape[0]
 
-    def sub_solve(idx: NDArray[np.int_], x0: Vector | None) -> tuple[Vector, Vector | None, int]:  # noqa: ARG001
+    def sub_solve(idx: NDArray[np.int_], x0: Vector | None) -> tuple[Vector, Vector | None, int]:
         """Solve the saddle system on the free set via the p-by-p Schur complement."""
         matvec_f = _free_matvec(op, idx)
         b_f = b_eq[:, idx]
-        v0, k0 = cg(matvec_f, b[idx], tol=cg_tol)
+        v0, k0 = cg(matvec_f, b[idx], tol=cg_tol, x0=x0)
         v1 = np.zeros((idx.size, p))
         k_cols = 0
         for j in range(p):
@@ -405,4 +412,4 @@ def solve_nnqp_eq(
         correction = b_eq.T @ lam if lam is not None else np.zeros_like(b)
         return op.matvec(x) - b - correction
 
-    return _active_set_loop(len(b), sub_solve, reduced_gradient, tol=tol, p_max=p_max)
+    return _active_set_loop(len(b), sub_solve, reduced_gradient, tol=tol, p_max=p_max, warm=warm)
