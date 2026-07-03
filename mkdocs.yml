@@ -1,9 +1,9 @@
 INHERIT: docs/mkdocs-base.yml
 
 site_name: nncg
-site_url: https://www.cvxgrp.org/nncg/
-repo_url: https://github.com/cvxgrp/nncg
-repo_name: cvxgrp/nncg
+site_url: https://jebel-quant.github.io/nncg/
+repo_url: https://github.com/Jebel-Quant/nncg
+repo_name: Jebel-Quant/nncg
 
 docs_dir: docs
 
@@ -12,12 +12,25 @@ theme:
   logo: assets/rhiza-logo.svg
   favicon: assets/rhiza-logo.svg
 
+# Restated from the base config (INHERIT replaces list-valued keys wholesale)
+# to add `paths: [src]` — the book builds in an isolated uvx environment where
+# nncg is not installed, so mkdocstrings must import it from the src layout.
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: google
+            show_source: true
+            show_root_heading: true
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+
 nav:
   - Home: index.md
-  - Factor backend: factor.md
-  - Notebooks:
-    - CLA: notebooks/cla.html
-    - Factor: notebooks/factor.html
+  - API reference: api.md
   - Reports:
-    - Test Report: reports/html-report/report.html
-    - Coverage Report: reports/html-coverage/index.html
+    - Test report: reports/html-report/report.html
+    - Coverage report: reports/html-coverage/index.html
