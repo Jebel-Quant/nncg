@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 from cvx.linalg import DenseOperator
-from problems import make_problem, make_scaled_problem
+from tests.problems import make_problem, make_scaled_problem
 
 from nncg import kkt_violation, solve_nnqp
 
