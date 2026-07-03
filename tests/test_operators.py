@@ -100,6 +100,33 @@ def test_pcg_without_diag_raises() -> None:
         solve_nnqp(_NoDiagOperator(a), b, inner="pcg")
 
 
+def test_exact_inner_guards_singular_free_block() -> None:
+    """``inner="exact"`` refuses a rank-deficient free block via ``rcond_free``.
+
+    An un-ridged Gram operator with fewer rows than free variables has a
+    singular free block on the initial all-free set; the guard turns the
+    latent factorisation failure into a clean diagnostic.
+    """
+    rng = np.random.default_rng(0)
+    m = rng.standard_normal((10, 30))  # rank 10 < n = 30
+    b = m.T @ rng.standard_normal(10)
+    with pytest.raises(ValueError, match="singular"):
+        solve_nnqp(GramOperator(m, ridge=0.0), b, inner="exact")
+
+
+def test_dimension_mismatch_is_rejected() -> None:
+    """An operator whose dimension disagrees with len(b) is refused at entry."""
+    a, b, _, _ = make_problem(20, 1e2, seed=0)
+    op = DenseOperator(a)
+    b_short = b[:-1]
+    with pytest.raises(ValueError, match="dimension"):
+        solve_nnqp(op, b_short)
+    with pytest.raises(ValueError, match="dimension"):
+        solve_nnqp_eq(op, b_short, np.ones((1, 19)), np.array([1.0]))
+    with pytest.raises(ValueError, match="dimension"):
+        kkt_violation(op, b_short, np.zeros(19))
+
+
 def test_dense_arrays_are_rejected() -> None:
     """A dense array is refused with a pointer to DenseOperator."""
     a, b, _, _ = make_problem(20, 1e2, seed=0)
