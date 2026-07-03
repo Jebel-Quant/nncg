@@ -28,7 +28,7 @@ def test_p_one_is_the_single_normalisation() -> None:
     of the equality-augmented problem whose budget is beta = 1^T x*, so the
     Schur-complement loop must return x* with a vanishing multiplier.
     """
-    from problems import make_problem
+    from tests.problems import make_problem
 
     a, b, x_star, _ = make_problem(60, 1e3, seed=0)
     ones = np.ones((1, 60))
