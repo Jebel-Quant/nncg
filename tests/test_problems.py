@@ -1,6 +1,7 @@
 """Tests of the planted-optimum problem generators."""
 
 import numpy as np
+from cvx.linalg import DenseOperator
 
 from nncg import kkt_violation, make_adversarial, make_eq_problem, make_problem, make_scaled_problem
 
@@ -12,7 +13,7 @@ def test_make_problem_plants_kkt_point() -> None:
     assert float(np.min(x_star)) >= 0.0
     assert float(np.min(s_star)) >= 0.0
     assert float(np.max(np.abs(x_star * s_star))) == 0.0
-    assert kkt_violation(a, b, x_star) < 1e-12
+    assert kkt_violation(DenseOperator(a), b, x_star) < 1e-12
 
 
 def test_make_problem_condition_number() -> None:

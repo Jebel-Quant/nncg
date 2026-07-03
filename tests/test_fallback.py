@@ -7,6 +7,7 @@ regression test: the fallback path is load-bearing and must stay exercised.
 """
 
 import numpy as np
+from cvx.linalg import DenseOperator
 
 from nncg import kkt_violation, make_adversarial, solve_nnqp, solve_nnqp_eq
 
@@ -19,7 +20,7 @@ def test_pure_block_pivoting_cycles_somewhere() -> None:
     cycled = 0
     for seed in SEEDS:
         a, b = make_adversarial(N, seed=seed)
-        res = solve_nnqp(a, b, p_max=10**9, inner="exact", max_outer=300, track=True)
+        res = solve_nnqp(DenseOperator(a), b, p_max=10**9, inner="exact", max_outer=300, track=True)
         assert res.traj is not None
         if not res.converged and len(res.traj) != len(set(res.traj)):
             cycled += 1
@@ -31,9 +32,9 @@ def test_guarded_loop_terminates_everywhere() -> None:
     fired = 0
     for seed in SEEDS:
         a, b = make_adversarial(N, seed=seed)
-        res = solve_nnqp(a, b)
+        res = solve_nnqp(DenseOperator(a), b)
         assert res.converged
-        assert kkt_violation(a, b, res.x) < 1e-6
+        assert kkt_violation(DenseOperator(a), b, res.x) < 1e-6
         fired += res.fallback > 0
     assert fired > 0  # the fallback is genuinely exercised, not dormant
 
@@ -51,7 +52,7 @@ def test_guarded_eq_loop_terminates_everywhere() -> None:
     fired = 0
     for seed in SEEDS:
         a, b = make_adversarial(N, seed=seed)
-        res = solve_nnqp_eq(a, b, b_eq, c_eq)
+        res = solve_nnqp_eq(DenseOperator(a), b, b_eq, c_eq)
         assert res.converged
         assert res.lam is not None
         s = a @ res.x - b - b_eq.T @ res.lam
