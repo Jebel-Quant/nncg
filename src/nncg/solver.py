@@ -22,6 +22,7 @@ matrix is never formed.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
@@ -29,6 +30,12 @@ from cvx.linalg import Matrix, SymmetricOperator, Vector, cholesky_solve
 from numpy.typing import NDArray
 
 from .krylov import MatVec, cg, pcg
+
+SubSolve = Callable[[NDArray[np.int_], "Vector | None"], "tuple[Vector, Vector | None, int]"]
+"""Subproblem solve on a free set: ``(idx, x0) -> (x_F, lam, inner_iters)``."""
+
+ReducedGradient = Callable[["Vector", "Vector | None"], "Vector"]
+"""Reduced gradient of the subproblem: ``(x, lam) -> s``."""
 
 _NEEDS_OPERATOR = (
     "the quadratic term must be a cvx.linalg.SymmetricOperator: wrap a dense SPD "
@@ -110,6 +117,110 @@ class Result:
     free: NDArray[np.bool_]
     lam: Vector | None = None
     traj: list[tuple[int, ...]] | None = None
+
+
+def _active_set_loop(
+    n: int,
+    sub_solve: SubSolve,
+    reduced_gradient: ReducedGradient,
+    tol: float,
+    p_max: int,
+    track: bool = False,
+    max_outer: int | None = None,
+    warm: tuple[NDArray[np.bool_], Vector] | None = None,
+) -> Result:
+    """Run the guarded primal-dual active-set loop shared by both solvers.
+
+    The driver owns everything the termination proof depends on: the primal
+    and dual violator tests, the batch exchange with its patience counter,
+    and the least-index Bland fallback. What is solved on each free set — a
+    single reduced system, or the equality-augmented saddle system — enters
+    through the ``sub_solve`` callback, with ``reduced_gradient`` supplying
+    the matching dual test quantity.
+
+    Args:
+        n: Problem dimension.
+        sub_solve: Callback ``(idx, x0) -> (x_F, lam, inner_iters)`` solving
+            the subproblem on the free set ``idx``. ``x0`` is a warm inner
+            guess restricted to ``idx`` (None on a cold start); ``lam`` are
+            the equality multipliers (None for the bound-only problem).
+        reduced_gradient: Callback ``(x, lam) -> s`` computing the reduced
+            gradient that drives the dual violator test.
+        tol: Threshold of the primal and dual violator tests.
+        p_max: Patience budget — non-improving batch steps tolerated before a
+            fallback pivot. Any value gives finite termination.
+        track: Record the free-set trajectory in ``Result.traj``.
+        max_outer: Optional cap on outer steps; when hit, the current iterate
+            is returned with ``converged=False``.
+        warm: Optional ``(free_mask, x_prev)`` pair from a previous solve.
+            Starts the loop from that free set and seeds every subproblem
+            solve from the newest iterate.
+
+    Returns:
+        A :class:`Result`; ``lam`` is whatever the last subproblem returned.
+    """
+    if warm is None:
+        free = np.ones(n, dtype=bool)  # F = {1..n} initially
+        x_guess: Vector | None = None
+    else:
+        free = warm[0].copy()
+        x_guess = warm[1]
+    x = np.zeros(n)
+    lam: Vector | None = None
+    n_bar = n + 1
+    patience = p_max
+    outer = inner_total = fallback = 0
+    traj: list[tuple[int, ...]] | None = [] if track else None
+    converged = True
+
+    while True:
+        if max_outer is not None and outer >= max_outer:
+            converged = False
+            break
+        idx = np.flatnonzero(free)
+        if traj is not None:
+            traj.append(tuple(idx.tolist()))
+        x0 = x_guess[idx] if x_guess is not None else None
+        xf, lam, k_step = sub_solve(idx, x0)
+        outer += 1
+        inner_total += k_step
+
+        x = np.zeros(n)
+        x[idx] = xf
+        if x_guess is not None:
+            x_guess = x  # warm mode: newest iterate seeds the next reduced solve
+        s = reduced_gradient(x, lam)
+
+        prim = np.flatnonzero(free & (x < -tol))  # D: free but negative
+        dual = np.flatnonzero((~free) & (s < -tol))  # V: bound but s < 0
+        viol = np.concatenate([prim, dual])
+        n_viol = viol.size
+        if n_viol == 0:
+            break  # KKT satisfied -> unique global minimiser
+
+        if n_viol < n_bar or patience > 0:  # fast path: progress, or patience remains
+            if n_viol < n_bar:
+                n_bar = n_viol
+                patience = p_max
+            else:
+                patience -= 1
+            free[prim] = False  # batch exchange: drop all D, add all V
+            free[dual] = True
+        else:  # anti-cycling fallback: single Bland least-index pivot
+            fallback += 1
+            i_star = int(viol.min())
+            free[i_star] = not free[i_star]
+
+    return Result(
+        x=x,
+        outer=outer,
+        inner=inner_total,
+        fallback=fallback,
+        converged=converged,
+        free=free,
+        lam=lam,
+        traj=traj,
+    )
 
 
 def kkt_violation(a: SymmetricOperator, b: Vector, x: Vector) -> float:
@@ -199,78 +310,38 @@ def solve_nnqp(
     """
     op = _require_operator(a)
     _check_dimension(op, b)
-    n = len(b)
     dinv: Vector | None = None  # Jacobi preconditioner, read off op.diag on first use
-    if warm is None:
-        free = np.ones(n, dtype=bool)  # F = {1..n} initially
-        x_guess: Vector | None = None
-    else:
-        free = warm[0].copy()
-        x_guess = warm[1]
-    x = np.zeros(n)
-    n_bar = n + 1
-    patience = p_max
-    outer = inner_total = fallback = 0
-    traj: list[tuple[int, ...]] | None = [] if track else None
-    converged = True
 
-    while True:
-        if max_outer is not None and outer >= max_outer:
-            converged = False
-            break
-        idx = np.flatnonzero(free)
-        if traj is not None:
-            traj.append(tuple(idx.tolist()))
-        x0 = x_guess[idx] if x_guess is not None else None
+    def sub_solve(idx: NDArray[np.int_], x0: Vector | None) -> tuple[Vector, Vector | None, int]:
+        """Solve the reduced system ``A_F x_F = b_F`` with the chosen inner solver."""
+        nonlocal dinv
         if inner == "exact":
             rcond = op.rcond_free(idx)
             if rcond < _RCOND_MIN:
                 msg = f"free block of size {idx.size} is numerically singular (rcond={rcond:.2e})"
                 raise ValueError(msg)
-            xf, k_step = op.solve_free(idx, b[idx]), 1
-        elif inner == "pcg":
+            return op.solve_free(idx, b[idx]), None, 1
+        if inner == "pcg":
             if dinv is None:
                 dinv = 1.0 / op.diag
             xf, k_step = pcg(_free_matvec(op, idx), b[idx], dinv[idx], tol=cg_tol, maxit=cg_maxit)
-        else:
-            xf, k_step = cg(_free_matvec(op, idx), b[idx], tol=cg_tol, maxit=cg_maxit, x0=x0)
-        outer += 1
-        inner_total += k_step
+            return xf, None, k_step
+        xf, k_step = cg(_free_matvec(op, idx), b[idx], tol=cg_tol, maxit=cg_maxit, x0=x0)
+        return xf, None, k_step
 
-        x = np.zeros(n)
-        x[idx] = xf
-        if x_guess is not None:
-            x_guess = x  # warm mode: newest iterate seeds the next reduced solve
-        s = op.matvec(x) - b  # reduced gradient s_i = (Ax)_i - b_i
+    def reduced_gradient(x: Vector, lam: Vector | None) -> Vector:  # noqa: ARG001
+        """Return the reduced gradient ``s = A x - b``."""
+        return op.matvec(x) - b
 
-        prim = np.flatnonzero(free & (x < -tol))  # D: free but negative
-        dual = np.flatnonzero((~free) & (s < -tol))  # V: bound but s < 0
-        viol = np.concatenate([prim, dual])
-        n_viol = viol.size
-        if n_viol == 0:
-            break  # KKT satisfied -> unique global minimiser
-
-        if n_viol < n_bar or patience > 0:  # fast path: progress, or patience remains
-            if n_viol < n_bar:
-                n_bar = n_viol
-                patience = p_max
-            else:
-                patience -= 1
-            free[prim] = False  # batch exchange: drop all D, add all V
-            free[dual] = True
-        else:  # anti-cycling fallback: single Bland least-index pivot
-            fallback += 1
-            i_star = int(viol.min())
-            free[i_star] = not free[i_star]
-
-    return Result(
-        x=x,
-        outer=outer,
-        inner=inner_total,
-        fallback=fallback,
-        converged=converged,
-        free=free,
-        traj=traj,
+    return _active_set_loop(
+        len(b),
+        sub_solve,
+        reduced_gradient,
+        tol=tol,
+        p_max=p_max,
+        track=track,
+        max_outer=max_outer,
+        warm=warm,
     )
 
 
@@ -312,17 +383,10 @@ def solve_nnqp_eq(
     """
     op = _require_operator(a)
     _check_dimension(op, b)
-    n = len(b)
     p = b_eq.shape[0]
-    free = np.ones(n, dtype=bool)
-    x = np.zeros(n)
-    lam = np.zeros(p)
-    n_bar = n + 1
-    patience = p_max
-    outer = inner_total = fallback = 0
 
-    while True:
-        idx = np.flatnonzero(free)
+    def sub_solve(idx: NDArray[np.int_], x0: Vector | None) -> tuple[Vector, Vector | None, int]:  # noqa: ARG001
+        """Solve the saddle system on the free set via the p-by-p Schur complement."""
         matvec_f = _free_matvec(op, idx)
         b_f = b_eq[:, idx]
         v0, k0 = cg(matvec_f, b[idx], tol=cg_tol)
@@ -331,41 +395,14 @@ def solve_nnqp_eq(
         for j in range(p):
             v1[:, j], kj = cg(matvec_f, b_f[j], tol=cg_tol)
             k_cols += kj
-        outer += 1
-        inner_total += k0 + k_cols
-
         schur = b_f @ v1  # p-by-p Schur complement, SPD
         lam = cholesky_solve(schur, c_eq - b_f @ v0)
         xf = v0 + v1 @ lam  # x_F = A_F^{-1}(b_F + B_F^T lambda)
-        x = np.zeros(n)
-        x[idx] = xf
-        s = op.matvec(x) - b - b_eq.T @ lam  # reduced gradient
+        return xf, lam, k0 + k_cols
 
-        prim = np.flatnonzero(free & (x < -tol))
-        dual = np.flatnonzero((~free) & (s < -tol))
-        viol = np.concatenate([prim, dual])
-        n_viol = viol.size
-        if n_viol == 0:
-            break
-        if n_viol < n_bar or patience > 0:
-            if n_viol < n_bar:
-                n_bar = n_viol
-                patience = p_max
-            else:
-                patience -= 1
-            free[prim] = False
-            free[dual] = True
-        else:
-            fallback += 1
-            i_star = int(viol.min())
-            free[i_star] = not free[i_star]
+    def reduced_gradient(x: Vector, lam: Vector | None) -> Vector:
+        """Return the constrained reduced gradient ``s = A x - b - B^T lam``."""
+        correction = b_eq.T @ lam if lam is not None else np.zeros_like(b)
+        return op.matvec(x) - b - correction
 
-    return Result(
-        x=x,
-        outer=outer,
-        inner=inner_total,
-        fallback=fallback,
-        converged=True,
-        free=free,
-        lam=lam,
-    )
+    return _active_set_loop(len(b), sub_solve, reduced_gradient, tol=tol, p_max=p_max)
