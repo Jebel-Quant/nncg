@@ -11,6 +11,13 @@ linear complementarity problem LCP(A, -b); guarding the fast block-pivot path
 with a least-index Bland fallback gives unconditional finite termination at
 the unique global minimiser — no non-degeneracy assumption (Theorem 5.1 of the
 accompanying paper). See https://github.com/Jebel-Quant/mean_variance_solvers.
+
+The quadratic term enters as a :class:`cvx.linalg.SymmetricOperator`, accessed
+only through block products: ``apply_free`` drives the CG inner solves,
+``matvec`` the reduced gradient, and ``solve_free`` the optional direct inner
+solver. Wrap an explicit SPD array in ``DenseOperator``; for the Gram case
+``A = M^T M + ridge I`` pass ``GramOperator(M, ridge)`` and the ``n x n``
+matrix is never formed.
 """
 
 from __future__ import annotations
@@ -18,22 +25,49 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-from cvx.linalg import Matrix, Vector, cholesky_solve
+from cvx.linalg import Matrix, SymmetricOperator, Vector, cholesky_solve
 from numpy.typing import NDArray
 
 from .krylov import MatVec, cg, pcg
 
+_NEEDS_OPERATOR = (
+    "the quadratic term must be a cvx.linalg.SymmetricOperator: wrap a dense SPD "
+    "array in DenseOperator(a), or pass GramOperator(M, ridge) for A = M'M + ridge*I"
+)
+_PCG_NEEDS_DINV = (
+    "inner='pcg' needs dinv, the elementwise inverse of diag(A); the operator interface exposes no diagonal"
+)
 
-def _matvec(m: Matrix) -> MatVec:
-    """Return the matrix-free action ``v -> m @ v`` of the reduced operator.
+
+def _require_operator(a: object) -> SymmetricOperator:
+    """Validate that the quadratic term is a symmetric operator.
 
     Args:
-        m: The reduced matrix ``A_FF``.
+        a: The candidate quadratic term.
 
     Returns:
-        A callable computing ``m @ v``.
+        *a* unchanged when it is a :class:`cvx.linalg.SymmetricOperator`.
+
+    Raises:
+        TypeError: When *a* is anything else (e.g. a dense array).
     """
-    return lambda v: m @ v
+    if not isinstance(a, SymmetricOperator):
+        raise TypeError(_NEEDS_OPERATOR)
+    return a
+
+
+def _free_matvec(op: SymmetricOperator, idx: NDArray[np.int_]) -> MatVec:
+    """Return the free-block action ``v -> A[F, F] v`` of the operator.
+
+    Args:
+        op: The symmetric operator ``A``.
+        idx: Integer positions of the free set ``F``.
+
+    Returns:
+        A callable computing ``op.apply_free(idx, v)``; the reduced matrix is
+        never materialised.
+    """
+    return lambda v: op.apply_free(idx, v)
 
 
 @dataclass(frozen=True)
@@ -65,11 +99,11 @@ class Result:
     traj: list[tuple[int, ...]] | None = None
 
 
-def kkt_violation(a: Matrix, b: Vector, x: Vector) -> float:
+def kkt_violation(a: SymmetricOperator, b: Vector, x: Vector) -> float:
     """Maximum violation of the KKT system of ``min_{x>=0} 1/2 x'Ax - b'x``.
 
     Args:
-        a: The SPD matrix ``A``.
+        a: The SPD operator ``A`` (a :class:`cvx.linalg.SymmetricOperator`).
         b: The linear term ``b``.
         x: Candidate solution.
 
@@ -78,7 +112,8 @@ def kkt_violation(a: Matrix, b: Vector, x: Vector) -> float:
         gradient ``s = A x - b``, and of the complementarity products
         ``|x_i s_i|``. Zero certifies the unique global minimiser.
     """
-    s = a @ x - b
+    op = _require_operator(a)
+    s = op.matvec(x) - b
     return float(
         max(
             np.max(-x, initial=0.0),
@@ -89,7 +124,7 @@ def kkt_violation(a: Matrix, b: Vector, x: Vector) -> float:
 
 
 def solve_nnqp(
-    a: Matrix,
+    a: SymmetricOperator,
     b: Vector,
     tol: float = 1e-8,
     cg_tol: float = 1e-10,
@@ -99,16 +134,20 @@ def solve_nnqp(
     cg_maxit: int = 100_000,
     max_outer: int | None = None,
     warm: tuple[NDArray[np.bool_], Vector] | None = None,
+    dinv: Vector | None = None,
 ) -> Result:
     """Minimise ``1/2 x^T A x - b^T x`` over ``x >= 0`` by the active-set loop.
 
-    Each free-block solve is matrix-free CG on ``v -> A_F v``; ``A`` is never
-    refactorised. The batch block-pivot fast path is guarded by a least-index
-    Bland fallback, so termination at the unique global minimiser is
-    unconditional — no non-degeneracy assumption.
+    Each free-block solve is matrix-free CG on ``v -> op.apply_free(F, v)``;
+    the reduced matrix is never materialised and ``A`` is never refactorised.
+    The batch block-pivot fast path is guarded by a least-index Bland
+    fallback, so termination at the unique global minimiser is unconditional
+    — no non-degeneracy assumption.
 
     Args:
-        a: The SPD matrix ``A``.
+        a: The SPD operator ``A`` (a :class:`cvx.linalg.SymmetricOperator`) —
+            ``DenseOperator`` for an explicit array, ``GramOperator(M, ridge)``
+            for ``A = M^T M + ridge I`` whose Gram matrix is never formed.
         b: The linear term ``b``.
         tol: Threshold of the primal and dual violator tests.
         cg_tol: Relative residual tolerance of the inner solves. Keep it a
@@ -116,8 +155,9 @@ def solve_nnqp(
             sign decisions as the exact one (Lemma 5.1 of the paper).
         p_max: Patience budget — non-improving batch steps tolerated before a
             fallback pivot. Any value gives finite termination.
-        inner: ``"cg"`` (matrix-free), ``"pcg"`` (Jacobi-preconditioned), or
-            ``"exact"`` (dense direct solve of each free block).
+        inner: ``"cg"`` (matrix-free), ``"pcg"`` (Jacobi-preconditioned;
+            requires ``dinv``), or ``"exact"`` (direct solve of each free
+            block via ``op.solve_free``).
         track: Record the free-set trajectory in ``Result.traj``.
         cg_maxit: Iteration cap per inner solve.
         max_outer: Optional cap on outer steps; when hit, the current iterate
@@ -126,11 +166,18 @@ def solve_nnqp(
             Starts the loop from that free set and warm-starts every CG call
             from the newest iterate — across a support-stable parameter step
             the loop then terminates in a single outer step.
+        dinv: Elementwise inverse of ``diag(A)``; required by ``inner="pcg"``
+            because the operator interface exposes no diagonal.
 
     Returns:
         A :class:`Result`; ``converged`` is True iff the KKT system was
         satisfied to ``tol``, which certifies the unique global minimiser.
+
+    Raises:
+        TypeError: When ``a`` is not a :class:`cvx.linalg.SymmetricOperator`.
+        ValueError: When ``inner="pcg"`` is used without ``dinv``.
     """
+    op = _require_operator(a)
     n = len(b)
     if warm is None:
         free = np.ones(n, dtype=bool)  # F = {1..n} initially
@@ -152,14 +199,15 @@ def solve_nnqp(
         idx = np.flatnonzero(free)
         if traj is not None:
             traj.append(tuple(idx.tolist()))
-        a_ff = a[np.ix_(idx, idx)]  # sliced view drives the matrix-free mat-vec
         x0 = x_guess[idx] if x_guess is not None else None
         if inner == "exact":
-            xf, k_step = cholesky_solve(a_ff, b[idx]), 1
+            xf, k_step = op.solve_free(idx, b[idx]), 1
         elif inner == "pcg":
-            xf, k_step = pcg(_matvec(a_ff), b[idx], 1.0 / np.diag(a_ff), tol=cg_tol, maxit=cg_maxit)
+            if dinv is None:
+                raise ValueError(_PCG_NEEDS_DINV)
+            xf, k_step = pcg(_free_matvec(op, idx), b[idx], dinv[idx], tol=cg_tol, maxit=cg_maxit)
         else:
-            xf, k_step = cg(_matvec(a_ff), b[idx], tol=cg_tol, maxit=cg_maxit, x0=x0)
+            xf, k_step = cg(_free_matvec(op, idx), b[idx], tol=cg_tol, maxit=cg_maxit, x0=x0)
         outer += 1
         inner_total += k_step
 
@@ -167,7 +215,7 @@ def solve_nnqp(
         x[idx] = xf
         if x_guess is not None:
             x_guess = x  # warm mode: newest iterate seeds the next reduced solve
-        s = a @ x - b  # reduced gradient s_i = (Ax)_i - b_i
+        s = op.matvec(x) - b  # reduced gradient s_i = (Ax)_i - b_i
 
         prim = np.flatnonzero(free & (x < -tol))  # D: free but negative
         dual = np.flatnonzero((~free) & (s < -tol))  # V: bound but s < 0
@@ -201,7 +249,7 @@ def solve_nnqp(
 
 
 def solve_nnqp_eq(
-    a: Matrix,
+    a: SymmetricOperator,
     b: Vector,
     b_eq: Matrix,
     c_eq: Vector,
@@ -220,7 +268,7 @@ def solve_nnqp_eq(
     row rank on the visited free sets (automatic for ``p = 1``).
 
     Args:
-        a: The SPD matrix ``A``.
+        a: The SPD operator ``A`` (a :class:`cvx.linalg.SymmetricOperator`).
         b: The linear term ``b``.
         b_eq: Equality matrix ``B`` of shape ``(p, n)``, full row rank.
         c_eq: Equality right-hand side ``c`` of shape ``(p,)``.
@@ -231,7 +279,11 @@ def solve_nnqp_eq(
     Returns:
         A :class:`Result` with the multipliers in ``lam``. The reduced
         gradient underlying the dual test is ``s = A x - b - B^T lam``.
+
+    Raises:
+        TypeError: When ``a`` is not a :class:`cvx.linalg.SymmetricOperator`.
     """
+    op = _require_operator(a)
     n = len(b)
     p = b_eq.shape[0]
     free = np.ones(n, dtype=bool)
@@ -243,13 +295,13 @@ def solve_nnqp_eq(
 
     while True:
         idx = np.flatnonzero(free)
-        a_ff = a[np.ix_(idx, idx)]
+        matvec_f = _free_matvec(op, idx)
         b_f = b_eq[:, idx]
-        v0, k0 = cg(_matvec(a_ff), b[idx], tol=cg_tol)
+        v0, k0 = cg(matvec_f, b[idx], tol=cg_tol)
         v1 = np.zeros((idx.size, p))
         k_cols = 0
         for j in range(p):
-            v1[:, j], kj = cg(_matvec(a_ff), b_f[j], tol=cg_tol)
+            v1[:, j], kj = cg(matvec_f, b_f[j], tol=cg_tol)
             k_cols += kj
         outer += 1
         inner_total += k0 + k_cols
@@ -259,7 +311,7 @@ def solve_nnqp_eq(
         xf = v0 + v1 @ lam  # x_F = A_F^{-1}(b_F + B_F^T lambda)
         x = np.zeros(n)
         x[idx] = xf
-        s = a @ x - b - b_eq.T @ lam  # reduced gradient
+        s = op.matvec(x) - b - b_eq.T @ lam  # reduced gradient
 
         prim = np.flatnonzero(free & (x < -tol))
         dual = np.flatnonzero((~free) & (s < -tol))

@@ -38,11 +38,14 @@ changes are overwritten on the next sync. Repo-owned files are `Makefile`,
 ## Conventions
 
 - Runtime dependencies are NumPy and `cvx-linalg` (the Jebel-Quant linear
-  algebra package: shared `Matrix`/`Vector` aliases, `cholesky_solve` for the
-  SPD direct solves). Do not add others. The matrix-free CG/PCG in
-  `krylov.py` stays in-house: `cvx-linalg`'s `solve_free`/`bordered_solve`
-  are direct factorisations, and the CG inner solver is this package's core
-  contribution.
+  algebra package). Do not add others.
+- The solvers take the quadratic term exclusively as a
+  `cvx.linalg.SymmetricOperator` (`DenseOperator` for explicit arrays,
+  `GramOperator` for `A = M'M + ridge I`): `apply_free` drives the in-house
+  CG, `matvec` the reduced gradient, `solve_free` only the `inner="exact"`
+  path. The matrix-free CG/PCG in `krylov.py` stays in-house — it is this
+  package's core contribution; do not swap it for `bordered_solve` or other
+  direct factorisations.
 - All public functions carry full docstrings and type hints (CI gates on
   both).
 - `make test`, `make fmt`, `make typecheck`, `make deptry` — see `make help`

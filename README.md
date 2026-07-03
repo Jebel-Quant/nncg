@@ -38,7 +38,9 @@ lemma), warm-started parameter sweeps, and the adversarial anti-correlated
 family on which the *unguarded* batch path provably cycles and the fallback
 terminates.
 
-When $A = M^\top M$ is a Gram matrix, the inner solves need only products with
+The quadratic term enters as a `cvx.linalg.SymmetricOperator`: wrap an
+explicit SPD array in `DenseOperator`. When $A = M^\top M$ is a Gram matrix,
+pass `GramOperator(M, ridge)` and the inner solves need only products with
 $M$ — the $n \times n$ matrix is never formed and working memory is $O(n)$.
 
 ## 📦 Installation
@@ -51,23 +53,30 @@ pip install nncg
 
 ```python
 import numpy as np
+from cvx.linalg import DenseOperator, GramOperator
 from nncg import solve_nnqp, solve_nnqp_eq, make_problem
 
 # a planted problem whose optimum is known in closed form
 A, b, x_star, _ = make_problem(n=200, kappa=1e4, seed=0)
+op = DenseOperator(A)                     # the solvers take a SymmetricOperator
 
-res = solve_nnqp(A, b)
+res = solve_nnqp(op, b)
 assert res.converged                      # KKT certificate reached
 assert np.allclose(res.x, x_star, atol=1e-6)
 assert res.outer < 10                     # single-digit outer steps
 
 # equality-augmented: minimise subject to x >= 0 and B x = c
 B = np.ones((1, 200))                     # p = 1: the budget 1'x = 1
-res_eq = solve_nnqp_eq(A, b, B, np.array([1.0]))
+res_eq = solve_nnqp_eq(op, b, B, np.array([1.0]))
 assert res_eq.lam.shape == (1,)           # multiplier, via a p-by-p Schur solve
 
 # warm-start a parametric sweep: support-stable steps take ONE outer step
-res2 = solve_nnqp(A, b + 1e-4, warm=(res.free, res.x))
+res2 = solve_nnqp(op, b + 1e-4, warm=(res.free, res.x))
+
+# Gram-structured: A = M'M + I only through products with M — never formed
+M = np.random.default_rng(1).standard_normal((50, 200))
+res_g = solve_nnqp(GramOperator(M, ridge=1.0), M.T @ np.ones(50))
+assert res_g.converged
 ```
 
 ## 🔬 The algorithm in one paragraph
