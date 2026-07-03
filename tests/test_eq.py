@@ -41,6 +41,35 @@ def test_p_one_is_the_single_normalisation() -> None:
     assert abs(float(res.x.sum()) - float(beta[0])) < 1e-9
 
 
+def test_eq_warm_start_support_stable_single_step() -> None:
+    """Across a support-stable parameter step the warm eq loop takes one outer step."""
+    a, b, b_eq, c_eq, _, _, _ = make_eq_problem(80, 1e3, 3, seed=2)
+    op = DenseOperator(a)
+    first = solve_nnqp_eq(op, b, b_eq, c_eq)
+    delta = 1e-4 * np.linalg.norm(b) * np.ones_like(b) / np.sqrt(len(b))
+    second_cold = solve_nnqp_eq(op, b + delta, b_eq, c_eq)
+    assert np.array_equal(second_cold.free, first.free)  # support-stable step
+    second_warm = solve_nnqp_eq(op, b + delta, b_eq, c_eq, warm=(first.free, first.x))
+    assert second_warm.converged
+    assert second_warm.outer == 1
+    assert second_warm.inner < second_cold.inner
+    assert np.max(np.abs(second_warm.x - second_cold.x)) < 1e-6
+    assert np.linalg.norm(b_eq @ second_warm.x - c_eq) < 1e-9
+
+
+def test_eq_warm_start_survives_support_drift() -> None:
+    """A warm start from a drifted support still reaches the right eq optimum."""
+    a, b, b_eq, c_eq, _, _, _ = make_eq_problem(80, 1e3, 3, seed=3)
+    op = DenseOperator(a)
+    first = solve_nnqp_eq(op, b, b_eq, c_eq)
+    b2 = b + 0.3 * np.linalg.norm(b) * np.random.default_rng(0).standard_normal(len(b)) / np.sqrt(len(b))
+    cold = solve_nnqp_eq(op, b2, b_eq, c_eq)
+    warm = solve_nnqp_eq(op, b2, b_eq, c_eq, warm=(first.free, first.x))
+    assert warm.converged
+    assert np.max(np.abs(warm.x - cold.x)) < 1e-6
+    assert np.linalg.norm(b_eq @ warm.x - c_eq) < 1e-9
+
+
 def test_eq_reduced_gradient_certifies() -> None:
     """At the exit, x >= 0 and s = Ax - b - B^T lam >= 0 hold to tolerance.
 
