@@ -2,7 +2,7 @@
 
 import numpy as np
 from cvx.linalg import DenseOperator
-from problems import make_adversarial, make_eq_problem, make_problem, make_scaled_problem
+from tests.problems import make_adversarial, make_eq_problem, make_problem, make_scaled_problem
 
 from nncg import kkt_violation
 
