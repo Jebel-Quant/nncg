@@ -79,14 +79,28 @@ def _require_operator(a: object) -> SymmetricOperator:
 def _free_matvec(op: SymmetricOperator, idx: NDArray[np.int_]) -> MatVec:
     """Return the free-block action ``v -> A[F, F] v`` of the operator.
 
+    The free-set restriction is hoisted out of the inner loop: when the
+    operator provides ``restricted`` (cvx-linalg >= 0.10), the pre-sliced
+    free-block operator is built once here and the returned callable is its
+    plain ``matvec``. Calling ``apply_free(idx, v)`` per CG iteration instead
+    re-gathers the operator's storage (e.g. the Gram factor columns) on every
+    call, which costs an order of magnitude more wall clock at identical
+    iteration counts. The fallback keeps older cvx-linalg releases working.
+
     Args:
         op: The symmetric operator ``A``.
         idx: Integer positions of the free set ``F``.
 
     Returns:
-        A callable computing ``op.apply_free(idx, v)``; the reduced matrix is
-        never materialised.
+        A callable computing ``A[F, F] @ v``; the reduced matrix is never
+        materialised.
     """
+    restricted = getattr(op, "restricted", None)
+    if restricted is not None:
+        try:
+            return restricted(idx).matvec
+        except NotImplementedError:
+            pass  # backend without a pre-sliced form; fall back below
     return lambda v: op.apply_free(idx, v)
 
 
