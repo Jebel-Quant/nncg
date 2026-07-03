@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 from cvx.linalg import DenseOperator
-from problems import make_eq_problem
+from tests.problems import make_eq_problem
 
 from nncg import solve_nnqp_eq
 
