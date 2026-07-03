@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#     "marimo",
+#     "marimo==0.23.13",
 #     "numpy>=2.0.0",
 #     "matplotlib",
 #     "cvx-linalg>=0.9.6",
