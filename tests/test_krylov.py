@@ -2,9 +2,9 @@
 
 import numpy as np
 import pytest
-from tests.problems import make_problem, make_scaled_problem
 
 from nncg import cg, pcg
+from tests.problems import make_problem, make_scaled_problem
 
 
 @pytest.fixture

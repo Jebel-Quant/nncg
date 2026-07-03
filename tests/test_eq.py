@@ -3,9 +3,9 @@
 import numpy as np
 import pytest
 from cvx.linalg import DenseOperator
-from tests.problems import make_eq_problem
 
 from nncg import solve_nnqp_eq
+from tests.problems import make_eq_problem
 
 
 @pytest.mark.parametrize("p", [1, 3, 8])

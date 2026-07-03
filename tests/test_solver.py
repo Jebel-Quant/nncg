@@ -3,9 +3,9 @@
 import numpy as np
 import pytest
 from cvx.linalg import DenseOperator
-from tests.problems import make_problem, make_scaled_problem
 
 from nncg import kkt_violation, solve_nnqp
+from tests.problems import make_problem, make_scaled_problem
 
 
 @pytest.mark.parametrize("kappa", [1e1, 1e3, 1e5])
