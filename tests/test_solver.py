@@ -49,7 +49,7 @@ def test_pcg_inner_solve() -> None:
     """The Jacobi-PCG inner solver reaches the same optimum, cheaper when scaled."""
     a, b, x_star = make_scaled_problem(80, 50.0, 1e4, seed=1)
     r_cg = solve_nnqp(DenseOperator(a), b)
-    r_pcg = solve_nnqp(DenseOperator(a), b, inner="pcg", dinv=1.0 / np.diag(a))
+    r_pcg = solve_nnqp(DenseOperator(a), b, inner="pcg")
     assert np.max(np.abs(r_cg.x - x_star)) < 1e-6
     assert np.max(np.abs(r_pcg.x - x_star)) < 1e-6
     assert r_pcg.inner < r_cg.inner

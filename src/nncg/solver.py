@@ -34,9 +34,6 @@ _NEEDS_OPERATOR = (
     "the quadratic term must be a cvx.linalg.SymmetricOperator: wrap a dense SPD "
     "array in DenseOperator(a), or pass GramOperator(M, ridge) for A = M'M + ridge*I"
 )
-_PCG_NEEDS_DINV = (
-    "inner='pcg' needs dinv, the elementwise inverse of diag(A); the operator interface exposes no diagonal"
-)
 
 
 def _require_operator(a: object) -> SymmetricOperator:
@@ -134,7 +131,6 @@ def solve_nnqp(
     cg_maxit: int = 100_000,
     max_outer: int | None = None,
     warm: tuple[NDArray[np.bool_], Vector] | None = None,
-    dinv: Vector | None = None,
 ) -> Result:
     """Minimise ``1/2 x^T A x - b^T x`` over ``x >= 0`` by the active-set loop.
 
@@ -155,9 +151,13 @@ def solve_nnqp(
             sign decisions as the exact one (Lemma 5.1 of the paper).
         p_max: Patience budget — non-improving batch steps tolerated before a
             fallback pivot. Any value gives finite termination.
-        inner: ``"cg"`` (matrix-free), ``"pcg"`` (Jacobi-preconditioned;
-            requires ``dinv``), or ``"exact"`` (direct solve of each free
-            block via ``op.solve_free``).
+        inner: ``"cg"`` (matrix-free), ``"pcg"`` (Jacobi-preconditioned from
+            ``op.diag``), or ``"exact"`` (direct solve of each free block via
+            ``op.solve_free``). Match the inner solver to the backend: pick
+            ``"exact"`` when ``solve_free`` is structured and cheap — e.g.
+            ``FactorOperator``'s Woodbury solve at ``O(|F| r^2)`` — and CG
+            when only products are cheap (large dense ``A``, Gram factors
+            with many rows).
         track: Record the free-set trajectory in ``Result.traj``.
         cg_maxit: Iteration cap per inner solve.
         max_outer: Optional cap on outer steps; when hit, the current iterate
@@ -166,8 +166,6 @@ def solve_nnqp(
             Starts the loop from that free set and warm-starts every CG call
             from the newest iterate — across a support-stable parameter step
             the loop then terminates in a single outer step.
-        dinv: Elementwise inverse of ``diag(A)``; required by ``inner="pcg"``
-            because the operator interface exposes no diagonal.
 
     Returns:
         A :class:`Result`; ``converged`` is True iff the KKT system was
@@ -175,10 +173,12 @@ def solve_nnqp(
 
     Raises:
         TypeError: When ``a`` is not a :class:`cvx.linalg.SymmetricOperator`.
-        ValueError: When ``inner="pcg"`` is used without ``dinv``.
+        NotImplementedError: When ``inner="pcg"`` meets a backend that does
+            not expose ``diag`` (propagated from ``cvx.linalg``).
     """
     op = _require_operator(a)
     n = len(b)
+    dinv: Vector | None = None  # Jacobi preconditioner, read off op.diag on first use
     if warm is None:
         free = np.ones(n, dtype=bool)  # F = {1..n} initially
         x_guess: Vector | None = None
@@ -204,7 +204,7 @@ def solve_nnqp(
             xf, k_step = op.solve_free(idx, b[idx]), 1
         elif inner == "pcg":
             if dinv is None:
-                raise ValueError(_PCG_NEEDS_DINV)
+                dinv = 1.0 / op.diag
             xf, k_step = pcg(_free_matvec(op, idx), b[idx], dinv[idx], tol=cg_tol, maxit=cg_maxit)
         else:
             xf, k_step = cg(_free_matvec(op, idx), b[idx], tol=cg_tol, maxit=cg_maxit, x0=x0)

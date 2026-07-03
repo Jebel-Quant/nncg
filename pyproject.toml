@@ -13,7 +13,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "cvx-linalg>=0.9.4",
+    "cvx-linalg>=0.9.5",
     "numpy>=2.0.0",
 ]
 

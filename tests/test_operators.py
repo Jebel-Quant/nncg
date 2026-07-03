@@ -10,9 +10,38 @@ memory claim concrete: with ``A = M^T M + ridge I`` supplied as a
 
 import numpy as np
 import pytest
-from cvx.linalg import DenseOperator, GramOperator
+from cvx.linalg import DenseOperator, GramOperator, SymmetricOperator
 
 from nncg import kkt_violation, make_problem, solve_nnqp, solve_nnqp_eq
+
+
+class _NoDiagOperator(SymmetricOperator):
+    """Dense-backed operator that keeps the base class's diag (which raises)."""
+
+    def __init__(self, a: np.ndarray) -> None:
+        """Store the backing array."""
+        self._a = a
+
+    @property
+    def n(self) -> int:
+        """Dimension of the operator."""
+        return int(self._a.shape[0])
+
+    def matvec(self, x: np.ndarray) -> np.ndarray:
+        """Return ``A @ x``."""
+        return self._a @ x
+
+    def block_matvec(self, rows: object, cols: object, v: np.ndarray) -> np.ndarray:
+        """Return ``A[rows, cols] @ v``."""
+        return self._a[np.ix_(rows, cols)] @ v
+
+    def solve_free(self, free: object, rhs: np.ndarray) -> np.ndarray:
+        """Solve the free block directly."""
+        return np.linalg.solve(self._a[np.ix_(free, free)], rhs)
+
+    def rcond_free(self, free: object) -> float:
+        """Reciprocal condition number of the free block."""
+        return 1.0 / float(np.linalg.cond(self._a[np.ix_(free, free)]))
 
 
 def _plant_gram_problem(m_rows: int, n: int, ridge: float, seed: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -56,20 +85,19 @@ def test_exact_inner_uses_operator_solve_free() -> None:
     assert np.max(np.abs(res_g.x - x_star_g)) < 1e-6
 
 
-def test_pcg_works_with_explicit_dinv() -> None:
-    """Jacobi PCG runs on operator input when the diagonal is supplied."""
+def test_pcg_preconditions_from_operator_diag() -> None:
+    """Jacobi PCG reads its preconditioner off ``op.diag`` — no matrix needed."""
     m, b, x_star = _plant_gram_problem(30, 60, ridge=1.0, seed=3)
-    dinv = 1.0 / (np.sum(m * m, axis=0) + 1.0)  # diag(M'M + I) from M
-    res = solve_nnqp(GramOperator(m, ridge=1.0), b, inner="pcg", dinv=dinv)
+    res = solve_nnqp(GramOperator(m, ridge=1.0), b, inner="pcg")
     assert res.converged
     assert np.max(np.abs(res.x - x_star)) < 1e-6
 
 
-def test_pcg_requires_dinv() -> None:
-    """Jacobi PCG needs diag(A), which the operator interface does not expose."""
+def test_pcg_without_diag_raises() -> None:
+    """A backend without a cheap diagonal refuses Jacobi PCG."""
     a, b, _, _ = make_problem(30, 1e2, seed=0)
-    with pytest.raises(ValueError, match="dinv"):
-        solve_nnqp(DenseOperator(a), b, inner="pcg")
+    with pytest.raises(NotImplementedError, match="diagonal"):
+        solve_nnqp(_NoDiagOperator(a), b, inner="pcg")
 
 
 def test_dense_arrays_are_rejected() -> None:
