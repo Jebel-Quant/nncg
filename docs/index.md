@@ -18,6 +18,6 @@ pip install nncg
 ## API
 
 The public API is `solve_nnqp`, `solve_nnqp_eq`, `cg`, `pcg`,
-`kkt_violation`, the `Result` dataclass, and the planted-problem generators
-`make_problem`, `make_eq_problem`, `make_adversarial`, `make_scaled_problem`.
-See the README for a quickstart.
+`kkt_violation`, and the `Result` dataclass. The planted-problem generators
+used by the numerical study live in the repository's `tests/problems.py`,
+outside the installed package. See the README for a quickstart.

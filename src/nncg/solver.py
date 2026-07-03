@@ -34,6 +34,22 @@ _NEEDS_OPERATOR = (
     "the quadratic term must be a cvx.linalg.SymmetricOperator: wrap a dense SPD "
     "array in DenseOperator(a), or pass GramOperator(M, ridge) for A = M'M + ridge*I"
 )
+_RCOND_MIN = 1e-12  # matches cvx-linalg's DEFAULT_COND_THRESHOLD of 1e12
+
+
+def _check_dimension(op: SymmetricOperator, b: Vector) -> None:
+    """Check that the operator and the linear term agree in dimension.
+
+    Args:
+        op: The symmetric operator ``A``.
+        b: The linear term ``b``.
+
+    Raises:
+        ValueError: When ``op.n != len(b)``.
+    """
+    if op.n != len(b):
+        msg = f"operator dimension {op.n} does not match len(b) = {len(b)}"
+        raise ValueError(msg)
 
 
 def _require_operator(a: object) -> SymmetricOperator:
@@ -110,6 +126,7 @@ def kkt_violation(a: SymmetricOperator, b: Vector, x: Vector) -> float:
         ``|x_i s_i|``. Zero certifies the unique global minimiser.
     """
     op = _require_operator(a)
+    _check_dimension(op, b)
     s = op.matvec(x) - b
     return float(
         max(
@@ -173,10 +190,15 @@ def solve_nnqp(
 
     Raises:
         TypeError: When ``a`` is not a :class:`cvx.linalg.SymmetricOperator`.
+        ValueError: When the operator dimension does not match ``len(b)``, or
+            when ``inner="exact"`` meets a numerically singular free block
+            (``op.rcond_free`` below 1e-12) — ``A`` is then not positive
+            definite on that free set; add a ridge.
         NotImplementedError: When ``inner="pcg"`` meets a backend that does
             not expose ``diag`` (propagated from ``cvx.linalg``).
     """
     op = _require_operator(a)
+    _check_dimension(op, b)
     n = len(b)
     dinv: Vector | None = None  # Jacobi preconditioner, read off op.diag on first use
     if warm is None:
@@ -201,6 +223,10 @@ def solve_nnqp(
             traj.append(tuple(idx.tolist()))
         x0 = x_guess[idx] if x_guess is not None else None
         if inner == "exact":
+            rcond = op.rcond_free(idx)
+            if rcond < _RCOND_MIN:
+                msg = f"free block of size {idx.size} is numerically singular (rcond={rcond:.2e})"
+                raise ValueError(msg)
             xf, k_step = op.solve_free(idx, b[idx]), 1
         elif inner == "pcg":
             if dinv is None:
@@ -282,8 +308,10 @@ def solve_nnqp_eq(
 
     Raises:
         TypeError: When ``a`` is not a :class:`cvx.linalg.SymmetricOperator`.
+        ValueError: When the operator dimension does not match ``len(b)``.
     """
     op = _require_operator(a)
+    _check_dimension(op, b)
     n = len(b)
     p = b_eq.shape[0]
     free = np.ones(n, dtype=bool)

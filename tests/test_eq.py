@@ -4,7 +4,8 @@ import numpy as np
 import pytest
 from cvx.linalg import DenseOperator
 
-from nncg import make_eq_problem, solve_nnqp_eq
+from nncg import solve_nnqp_eq
+from tests.problems import make_eq_problem
 
 
 @pytest.mark.parametrize("p", [1, 3, 8])
@@ -27,7 +28,7 @@ def test_p_one_is_the_single_normalisation() -> None:
     of the equality-augmented problem whose budget is beta = 1^T x*, so the
     Schur-complement loop must return x* with a vanishing multiplier.
     """
-    from nncg import make_problem
+    from tests.problems import make_problem
 
     a, b, x_star, _ = make_problem(60, 1e3, seed=0)
     ones = np.ones((1, 60))
