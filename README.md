@@ -2,7 +2,13 @@
 
 # ➕ nncg — Non-Negative Conjugate Gradients
 
+[![CI](https://github.com/Jebel-Quant/nncg/actions/workflows/rhiza_ci.yml/badge.svg)](https://github.com/Jebel-Quant/nncg/actions/workflows/rhiza_ci.yml)
+[![Coverage](https://jebel-quant.github.io/nncg/coverage-badge.svg)](https://jebel-quant.github.io/nncg/reports/html-coverage/)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://github.com/Jebel-Quant/nncg/blob/main/pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![CodeQL](https://github.com/Jebel-Quant/nncg/actions/workflows/rhiza_codeql.yml/badge.svg)](https://github.com/Jebel-Quant/nncg/actions/workflows/rhiza_codeql.yml)
+[![Rhiza](https://img.shields.io/badge/dynamic/yaml?url=https%3A%2F%2Fraw.githubusercontent.com%2FJebel-Quant%2Fnncg%2Fmain%2F.rhiza%2Ftemplate.yml&query=%24.ref&label=rhiza)](https://github.com/jebel-quant/rhiza)
+[![Paper](https://img.shields.io/badge/paper-Non--Negative_Conjugate_Gradients-red?logo=adobeacrobatreader)](https://github.com/Jebel-Quant/mean_variance_solvers)
 
 ---
 
