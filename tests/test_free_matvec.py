@@ -7,6 +7,7 @@ from nncg.solver import _free_matvec
 
 
 def _dense_pair(seed: int = 0) -> tuple[DenseOperator, np.ndarray]:
+    """Return a matched ``(DenseOperator, ndarray)`` SPD pair for a given seed."""
     rng = np.random.default_rng(seed)
     a = rng.standard_normal((6, 6))
     a = a @ a.T + np.eye(6)
@@ -27,7 +28,7 @@ def test_free_matvec_uses_restricted_when_available() -> None:
 
 def test_free_matvec_falls_back_without_restricted() -> None:
     """An operator without ``restricted`` still works through ``apply_free``."""
-    op, a = _dense_pair(1)
+    _op, a = _dense_pair(1)
     idx = np.array([1, 3, 4])
 
     class _Legacy:
@@ -43,7 +44,7 @@ def test_free_matvec_falls_back_without_restricted() -> None:
 
 def test_free_matvec_falls_back_on_raising_default() -> None:
     """A backend inheriting the raising default of ``restricted`` falls back cleanly."""
-    op, a = _dense_pair(2)
+    _op, a = _dense_pair(2)
     idx = np.array([0, 4])
 
     class _NoRestricted(SymmetricOperator):
@@ -53,16 +54,16 @@ def test_free_matvec_falls_back_on_raising_default() -> None:
         def n(self) -> int:
             return 6
 
-        def matvec(self, x):  # noqa: ANN001, ANN201
+        def matvec(self, x):
             return a @ x
 
-        def block_matvec(self, rows, cols, v):  # noqa: ANN001, ANN201
+        def block_matvec(self, rows, cols, v):
             return a[np.ix_(np.asarray(rows), np.asarray(cols))] @ v
 
-        def solve_free(self, free, rhs):  # noqa: ANN001, ANN201
+        def solve_free(self, free, rhs):
             return np.linalg.solve(a[np.ix_(free, free)], rhs)
 
-        def rcond_free(self, free) -> float:  # noqa: ANN001
+        def rcond_free(self, free) -> float:
             return 1.0
 
     mv = _free_matvec(_NoRestricted(), idx)

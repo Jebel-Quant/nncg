@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import cast
 
 import numpy as np
 from cvx.linalg import Matrix, SymmetricOperator, Vector, cholesky_solve
@@ -98,7 +99,7 @@ def _free_matvec(op: SymmetricOperator, idx: NDArray[np.int_]) -> MatVec:
     restricted = getattr(op, "restricted", None)
     if restricted is not None:
         try:
-            return restricted(idx).matvec
+            return cast(MatVec, restricted(idx).matvec)
         except NotImplementedError:
             pass  # backend without a pre-sliced form; fall back below
     return lambda v: op.apply_free(idx, v)
