@@ -54,16 +54,18 @@ pip install nncg
 ```python
 import numpy as np
 from cvx.linalg import DenseOperator, GramOperator
-from nncg import solve_nnqp, solve_nnqp_eq, make_problem
+from nncg import kkt_violation, solve_nnqp, solve_nnqp_eq
 
-# a planted problem whose optimum is known in closed form
-A, b, x_star, _ = make_problem(n=200, kappa=1e4, seed=0)
+# a random SPD problem with condition number 1e4
+rng = np.random.default_rng(0)
+Q, _ = np.linalg.qr(rng.standard_normal((200, 200)))
+A = (Q * np.geomspace(1.0, 1e4, 200)) @ Q.T
+b = rng.standard_normal(200)
 op = DenseOperator(A)                     # the solvers take a SymmetricOperator
 
 res = solve_nnqp(op, b)
-assert res.converged                      # KKT certificate reached
-assert np.allclose(res.x, x_star, atol=1e-6)
-assert res.outer < 10                     # single-digit outer steps
+assert res.converged                      # stopped on the KKT certificate
+assert kkt_violation(op, b, res.x) < 1e-6 # zero certifies the global minimiser
 
 # equality-augmented: minimise subject to x >= 0 and B x = c
 B = np.ones((1, 200))                     # p = 1: the budget 1'x = 1
@@ -88,8 +90,9 @@ variable whose reduced gradient is negative (dual step); repeat. Batch
 exchanges are fast but can cycle; a patience counter falls back to Murty's
 least-index single pivot, which cannot — hence finite termination without any
 non-degeneracy hypothesis, and the fallback is provably necessary: on
-anti-correlated designs (`make_adversarial`) the unguarded batch path revisits
-a previously seen working set and loops forever.
+anti-correlated designs (the `make_adversarial` family in the test suite's
+`tests/problems.py`) the unguarded batch path revisits a previously seen
+working set and loops forever.
 
 ## 📖 Citation
 

@@ -11,8 +11,9 @@ memory claim concrete: with ``A = M^T M + ridge I`` supplied as a
 import numpy as np
 import pytest
 from cvx.linalg import DenseOperator, GramOperator, SymmetricOperator
+from problems import make_problem
 
-from nncg import kkt_violation, make_problem, solve_nnqp, solve_nnqp_eq
+from nncg import kkt_violation, solve_nnqp, solve_nnqp_eq
 
 
 class _NoDiagOperator(SymmetricOperator):

@@ -3,9 +3,10 @@
 Synthetic SPD test families with a known optimum in closed form: a
 complementary pair ``(x*, s*)`` is planted and ``b = A x* - s*``, so
 ``(x*, s*)`` solves the LCP and ``x*`` is the unique minimiser. These power
-the package's test suite and the numerical study of the accompanying paper;
-they are exported because planting a known optimum is the honest way to test
-any bound-constrained QP solver.
+the package's test suite and the numerical study of the accompanying paper —
+planting a known optimum is the honest way to test any bound-constrained QP
+solver. They live outside the installed package, next to the tests, and stay
+importable from here for later experiments and notebooks.
 """
 
 from __future__ import annotations

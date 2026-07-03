@@ -28,8 +28,9 @@ changes are overwritten on the next sync. Repo-owned files are `Makefile`,
 - `src/nncg/solver.py` — the active-set loop (`solve_nnqp`, `solve_nnqp_eq`),
   the `Result` dataclass, and the `kkt_violation` certificate.
 - `src/nncg/krylov.py` — plain and Jacobi-preconditioned CG, warm-startable.
-- `src/nncg/problems.py` — planted-optimum generators, including the
-  adversarial anti-correlated family that forces the Bland fallback.
+- `tests/problems.py` — planted-optimum generators, including the adversarial
+  anti-correlated family that forces the Bland fallback. Deliberately outside
+  the installed package; also intended for later experiments and notebooks.
 - `tests/` — the paper's numerical study as a test suite. Keep it that way:
   every mathematical claim in the paper that this package implements should
   have a test here, and `tests/test_fallback.py` must keep the fallback path
