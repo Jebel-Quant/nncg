@@ -8,7 +8,7 @@ regression test: the fallback path is load-bearing and must stay exercised.
 
 import numpy as np
 from cvx.linalg import DenseOperator
-from problems import make_adversarial
+from tests.problems import make_adversarial
 
 from nncg import kkt_violation, solve_nnqp, solve_nnqp_eq
 
