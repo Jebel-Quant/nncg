@@ -1,6 +1,6 @@
 [project]
 name = "nncg"
-version = "0.1.0"
+version = "0.2.0"
 description = "Non-negative conjugate gradients: bound-constrained SPD quadratics by a guarded active-set loop"
 readme = "README.md"
 requires-python = ">=3.11"
