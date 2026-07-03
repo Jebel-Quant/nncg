@@ -17,7 +17,9 @@ pip install nncg
 
 ## API
 
-The public API is `solve_nnqp`, `solve_nnqp_eq`, `cg`, `pcg`,
-`kkt_violation`, and the `Result` dataclass. The planted-problem generators
+The public API is `solve_nnqp`, `solve_nnqp_eq`, `kkt_violation`, and the
+`Result` dataclass. The matrix-free CG/PCG inner solvers live in
+`nncg.krylov` — the package's core contribution, driven by the solvers
+rather than imported directly. The planted-problem generators
 used by the numerical study live in the repository's `tests/problems.py`,
 outside the installed package. See the README for a quickstart.
