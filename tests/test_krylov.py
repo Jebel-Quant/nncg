@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from nncg import cg, pcg
+from nncg.krylov import cg, pcg
 from tests.problems import make_problem, make_scaled_problem
 
 
