@@ -120,13 +120,16 @@ def solve_osqp(
     p_mat = sparse.triu(sparse.csc_matrix(mat)).tocsc()
     q = -np.asarray(b, dtype=float)
 
-    blocks: list[Any] = [sparse.eye(n, format="csc")]
-    lo: list[Vector] = [np.zeros(n)]
-    hi: list[Vector] = [np.full(n, np.inf)]
-    if b_eq is not None and c_eq is not None:
-        blocks.append(sparse.csc_matrix(np.asarray(b_eq, dtype=float)))
-        lo.append(np.asarray(c_eq, dtype=float))
-        hi.append(np.asarray(c_eq, dtype=float))
+if (b_eq is None) != (c_eq is None):
+    raise ValueError("b_eq and c_eq must be provided together")
+
+blocks: list[Any] = [sparse.eye(n, format="csc")]
+lo: list[Vector] = [np.zeros(n)]
+hi: list[Vector] = [np.full(n, np.inf)]
+if b_eq is not None:
+    blocks.append(sparse.csc_matrix(np.asarray(b_eq, dtype=float)))
+    lo.append(np.asarray(c_eq, dtype=float))
+    hi.append(np.asarray(c_eq, dtype=float))
     a_con = sparse.vstack(blocks, format="csc")
     lower, upper = np.concatenate(lo), np.concatenate(hi)
 
