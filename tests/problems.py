@@ -132,6 +132,55 @@ def make_adversarial(
     return a, m.T @ rng.standard_normal(n)
 
 
+def make_scaled_eq_problem(
+    n: int,
+    kappa_core: float,
+    spread: float,
+    p: int,
+    support_frac: float = 0.5,
+    seed: int = 0,
+) -> tuple[Matrix, Vector, Matrix, Vector, Vector, Vector, Vector]:
+    """Equality-augmented planted problem under a bad diagonal scaling.
+
+    Combines :func:`make_eq_problem`'s planted KKT triple with
+    :func:`make_scaled_problem`'s ill-conditioned-by-scaling ``A``: a
+    well-conditioned core (condition number ``kappa_core``) wrapped in a
+    diagonal scaling ``D`` spanning ``[1, spread]``. Jacobi preconditioning
+    removes the scaling, so PCG inner solves run at the core's conditioning
+    while plain CG pays for the full spread — the equality-constrained analogue
+    of the ``make_scaled_problem`` preconditioning win.
+
+    Args:
+        n: Problem dimension.
+        kappa_core: Condition number of the unscaled core.
+        spread: Ratio between the largest and smallest diagonal scale.
+        p: Number of equality constraints (rows of ``B``).
+        support_frac: Fraction of indices in the optimal support.
+        seed: Seed of the random generator.
+
+    Returns:
+        The tuple ``(A, b, B, c, x_star, lam_star, s_star)``.
+    """
+    rng = np.random.default_rng(seed)
+    eig = np.geomspace(1.0, kappa_core, n)
+    q, _ = np.linalg.qr(rng.standard_normal((n, n)))
+    core = 0.5 * ((q * eig) @ q.T + ((q * eig) @ q.T).T)
+    d = rng.permutation(np.geomspace(1.0, spread, n))
+    a = core * np.sqrt(np.outer(d, d))
+    k = max(p + 1, round(support_frac * n))
+    perm = rng.permutation(n)
+    supp, off = perm[:k], perm[k:]
+    x_star = np.zeros(n)
+    x_star[supp] = rng.uniform(0.5, 1.5, size=k)
+    s_star = np.zeros(n)
+    s_star[off] = rng.uniform(0.5, 1.5, size=n - k)
+    b_eq = rng.standard_normal((p, n))
+    lam_star = rng.standard_normal(p)
+    b = a @ x_star - b_eq.T @ lam_star - s_star
+    c_eq = b_eq @ x_star
+    return a, b, b_eq, c_eq, x_star, lam_star, s_star
+
+
 def make_scaled_problem(
     n: int,
     kappa_core: float,

@@ -109,6 +109,70 @@ def _free_matvec(op: SymmetricOperator, idx: NDArray[np.int_]) -> MatVec:
     return lambda v: op.apply_free(idx, v)
 
 
+#: A single free-block solve ``(idx, rhs, x0) -> (y, iters)`` for ``A[F, F] y = rhs``.
+FreeSolve = Callable[[NDArray[np.int_], Vector, "Vector | None"], "tuple[Vector, int]"]
+
+
+def _make_free_solve(
+    op: SymmetricOperator,
+    inner: InnerSolver,
+    cg_tol: float,
+    cg_maxit: int,
+) -> FreeSolve:
+    """Build the per-free-block solver ``A[F, F] y = rhs`` for the chosen backend.
+
+    The returned callable is shared by both entry points: :func:`solve_nnqp`
+    calls it once per outer step, :func:`solve_nnqp_eq` once for the ``v0``
+    right-hand side and once per Schur-complement column. All calls on a given
+    free set share the same operator ``A_F``, so the Jacobi preconditioner is
+    read off ``op.diag`` lazily and cached across them. The ``x0`` warm start is
+    honoured only by plain CG; ``pcg`` and ``exact`` ignore it.
+
+    Args:
+        op: The SPD operator ``A``.
+        inner: Inner solver — ``"cg"``, ``"pcg"``, or ``"exact"``.
+        cg_tol: Relative residual tolerance of the CG/PCG solves.
+        cg_maxit: Iteration cap per CG/PCG solve.
+
+    Returns:
+        A callable ``(idx, rhs, x0) -> (y, iters)``; each ``"exact"`` direct
+        solve counts as one iteration.
+
+    Raises:
+        ValueError: When ``inner`` is not one of ``"cg"``, ``"pcg"``,
+            ``"exact"`` (raised eagerly), or, on the ``"exact"`` path, when a
+            free block is numerically singular (``op.rcond_free`` below 1e-12).
+        NotImplementedError: When ``inner="pcg"`` meets a backend without
+            ``diag`` (propagated from ``cvx.linalg``).
+    """
+    if inner not in ("cg", "pcg", "exact"):
+        msg = f"inner must be 'cg', 'pcg', or 'exact'; got {inner!r}"
+        raise ValueError(msg)
+    dinv: Vector | None = None  # Jacobi preconditioner, read off op.diag on first use
+    checked: NDArray[np.int_] | None = None  # last free set whose SPD-ness was verified
+
+    def free_solve(idx: NDArray[np.int_], rhs: Vector, x0: Vector | None) -> tuple[Vector, int]:
+        nonlocal dinv, checked
+        if inner == "exact":
+            # The rcond guard depends only on the free set, not the right-hand
+            # side, so verify it once per free set — solve_nnqp_eq drives p + 1
+            # solves through the same idx and must not pay for p + 1 estimates.
+            if checked is None or not np.array_equal(checked, idx):
+                rcond = op.rcond_free(idx)
+                if rcond < _RCOND_MIN:
+                    msg = f"free block of size {idx.size} is numerically singular (rcond={rcond:.2e})"
+                    raise ValueError(msg)
+                checked = idx
+            return op.solve_free(idx, rhs), 1
+        if inner == "pcg":
+            if dinv is None:
+                dinv = 1.0 / op.diag
+            return pcg(_free_matvec(op, idx), rhs, dinv[idx], tol=cg_tol, maxit=cg_maxit)
+        return cg(_free_matvec(op, idx), rhs, tol=cg_tol, maxit=cg_maxit, x0=x0)
+
+    return free_solve
+
+
 @dataclass(frozen=True)
 class Result:
     """Outcome of an active-set solve.
@@ -330,26 +394,11 @@ def solve_nnqp(
     """
     op = _require_operator(a)
     _check_dimension(op, b)
-    dinv: Vector | None = None  # Jacobi preconditioner, read off op.diag on first use
+    free_solve = _make_free_solve(op, inner, cg_tol, cg_maxit)
 
     def sub_solve(idx: NDArray[np.int_], x0: Vector | None) -> tuple[Vector, Vector | None, int]:
         """Solve the reduced system ``A_F x_F = b_F`` with the chosen inner solver."""
-        nonlocal dinv
-        if inner == "exact":
-            rcond = op.rcond_free(idx)
-            if rcond < _RCOND_MIN:
-                msg = f"free block of size {idx.size} is numerically singular (rcond={rcond:.2e})"
-                raise ValueError(msg)
-            return op.solve_free(idx, b[idx]), None, 1
-        if inner == "pcg":
-            if dinv is None:
-                dinv = 1.0 / op.diag
-            xf, k_step = pcg(_free_matvec(op, idx), b[idx], dinv[idx], tol=cg_tol, maxit=cg_maxit)
-            return xf, None, k_step
-        if inner != "cg":
-            msg = f"inner must be 'cg', 'pcg', or 'exact'; got {inner!r}"
-            raise ValueError(msg)
-        xf, k_step = cg(_free_matvec(op, idx), b[idx], tol=cg_tol, maxit=cg_maxit, x0=x0)
+        xf, k_step = free_solve(idx, b[idx], x0)
         return xf, None, k_step
 
     def reduced_gradient(x: Vector, lam: Vector | None) -> Vector:  # noqa: ARG001
@@ -376,6 +425,10 @@ def solve_nnqp_eq(
     tol: float = 1e-8,
     cg_tol: float = 1e-10,
     p_max: int = 3,
+    inner: InnerSolver = "cg",
+    track: bool = False,
+    cg_maxit: int = 100_000,
+    max_outer: int | None = None,
     warm: tuple[NDArray[np.bool_], Vector] | None = None,
 ) -> Result:
     """Solve ``min 1/2 x^T A x - b^T x`` subject to ``x >= 0`` and ``B x = c``.
@@ -383,7 +436,7 @@ def solve_nnqp_eq(
     On each free set the saddle system is solved by eliminating the multiplier
     ``lambda`` in R^p through the p-by-p Schur complement
     ``S = B_F A_F^{-1} B_F^T``: the ``p + 1`` right-hand sides share the
-    operator ``A_F`` and are each one matrix-free CG solve, then
+    operator ``A_F`` and are each one inner solve (see ``inner``), then
     ``S lambda = c - B_F v0`` fixes the multipliers in closed form. The single
     normalisation ``1^T x = beta`` is the ``p = 1`` case. ``B`` must have full
     row rank on the visited free sets (automatic for ``p = 1``).
@@ -394,14 +447,23 @@ def solve_nnqp_eq(
         b_eq: Equality matrix ``B`` of shape ``(p, n)``, full row rank.
         c_eq: Equality right-hand side ``c`` of shape ``(p,)``.
         tol: Threshold of the primal and dual violator tests.
-        cg_tol: Relative residual tolerance of the inner CG solves.
+        cg_tol: Relative residual tolerance of the inner CG/PCG solves.
         p_max: Patience budget of the batch fast path.
+        inner: Inner solver for each free block, applied to all ``p + 1``
+            right-hand sides — ``"cg"`` (matrix-free), ``"pcg"`` (Jacobi from
+            ``op.diag``), or ``"exact"`` (direct ``op.solve_free``); the same
+            choice :func:`solve_nnqp` offers.
+        track: Record the free-set trajectory in ``Result.traj``.
+        cg_maxit: Iteration cap per inner CG/PCG solve.
+        max_outer: Optional cap on outer steps; when hit, the current iterate
+            is returned with ``converged=False``.
         warm: Optional ``(free_mask, x_prev)`` pair from a previous solve —
             the same tuple :func:`solve_nnqp` accepts. Starts the loop from
             that free set and seeds the ``v0`` solve of every saddle step
             from the newest iterate; the ``v1`` columns are re-solved cold.
-            Across a support-stable parameter step the loop then terminates
-            in a single outer step.
+            Only ``inner="cg"`` consumes the warm start; ``pcg``/``exact``
+            ignore it. Across a support-stable parameter step the loop then
+            terminates in a single outer step.
 
     Returns:
         A :class:`Result` with the multipliers in ``lam``. The reduced
@@ -409,21 +471,25 @@ def solve_nnqp_eq(
 
     Raises:
         TypeError: When ``a`` is not a :class:`cvx.linalg.SymmetricOperator`.
-        ValueError: When the operator dimension does not match ``len(b)``.
+        ValueError: When the operator dimension does not match ``len(b)``;
+            when ``inner`` is not one of ``"cg"``, ``"pcg"``, ``"exact"``; or
+            when ``inner="exact"`` meets a numerically singular free block.
+        NotImplementedError: When ``inner="pcg"`` meets a backend that does
+            not expose ``diag`` (propagated from ``cvx.linalg``).
     """
     op = _require_operator(a)
     _check_dimension(op, b)
     p = b_eq.shape[0]
+    free_solve = _make_free_solve(op, inner, cg_tol, cg_maxit)
 
     def sub_solve(idx: NDArray[np.int_], x0: Vector | None) -> tuple[Vector, Vector | None, int]:
         """Solve the saddle system on the free set via the p-by-p Schur complement."""
-        matvec_f = _free_matvec(op, idx)
         b_f = b_eq[:, idx]
-        v0, k0 = cg(matvec_f, b[idx], tol=cg_tol, x0=x0)
+        v0, k0 = free_solve(idx, b[idx], x0)
         v1 = np.zeros((idx.size, p))
         k_cols = 0
         for j in range(p):
-            v1[:, j], kj = cg(matvec_f, b_f[j], tol=cg_tol)
+            v1[:, j], kj = free_solve(idx, b_f[j], None)
             k_cols += kj
         schur = b_f @ v1  # p-by-p Schur complement, SPD
         lam = cholesky_solve(schur, c_eq - b_f @ v0)
@@ -435,4 +501,13 @@ def solve_nnqp_eq(
         correction = b_eq.T @ lam if lam is not None else np.zeros_like(b)
         return op.matvec(x) - b - correction
 
-    return _active_set_loop(len(b), sub_solve, reduced_gradient, tol=tol, p_max=p_max, warm=warm)
+    return _active_set_loop(
+        len(b),
+        sub_solve,
+        reduced_gradient,
+        tol=tol,
+        p_max=p_max,
+        track=track,
+        max_outer=max_outer,
+        warm=warm,
+    )
