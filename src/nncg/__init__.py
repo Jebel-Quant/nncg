@@ -13,9 +13,10 @@ suite: https://github.com/Jebel-Quant/mean_variance_solvers.
 
 import importlib.metadata
 
-from .solver import Result, kkt_violation, solve_nnqp, solve_nnqp_eq
+from .solver import InnerSolver, Result, kkt_violation, solve_nnqp, solve_nnqp_eq
 
 __all__ = [
+    "InnerSolver",
     "Result",
     "kkt_violation",
     "solve_nnqp",

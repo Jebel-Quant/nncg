@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import cast
+from typing import Literal, cast
 
 import numpy as np
 from cvx.linalg import Matrix, SymmetricOperator, Vector, cholesky_solve
@@ -33,6 +33,10 @@ from numpy.typing import NDArray
 from .krylov import MatVec, cg, pcg
 
 SubSolve = Callable[[NDArray[np.int_], "Vector | None"], "tuple[Vector, Vector | None, int]"]
+
+#: The inner solver for each free-block system: ``"cg"`` (matrix-free CG),
+#: ``"pcg"`` (Jacobi-preconditioned CG), or ``"exact"`` (direct ``solve_free``).
+InnerSolver = Literal["cg", "pcg", "exact"]
 """Subproblem solve on a free set: ``(idx, x0) -> (x_F, lam, inner_iters)``."""
 
 ReducedGradient = Callable[["Vector", "Vector | None"], "Vector"]
@@ -269,7 +273,7 @@ def solve_nnqp(
     tol: float = 1e-8,
     cg_tol: float = 1e-10,
     p_max: int = 3,
-    inner: str = "cg",
+    inner: InnerSolver = "cg",
     track: bool = False,
     cg_maxit: int = 100_000,
     max_outer: int | None = None,
@@ -316,7 +320,8 @@ def solve_nnqp(
 
     Raises:
         TypeError: When ``a`` is not a :class:`cvx.linalg.SymmetricOperator`.
-        ValueError: When the operator dimension does not match ``len(b)``, or
+        ValueError: When the operator dimension does not match ``len(b)``;
+            when ``inner`` is not one of ``"cg"``, ``"pcg"``, ``"exact"``; or
             when ``inner="exact"`` meets a numerically singular free block
             (``op.rcond_free`` below 1e-12) — ``A`` is then not positive
             definite on that free set; add a ridge.
@@ -341,6 +346,9 @@ def solve_nnqp(
                 dinv = 1.0 / op.diag
             xf, k_step = pcg(_free_matvec(op, idx), b[idx], dinv[idx], tol=cg_tol, maxit=cg_maxit)
             return xf, None, k_step
+        if inner != "cg":
+            msg = f"inner must be 'cg', 'pcg', or 'exact'; got {inner!r}"
+            raise ValueError(msg)
         xf, k_step = cg(_free_matvec(op, idx), b[idx], tol=cg_tol, maxit=cg_maxit, x0=x0)
         return xf, None, k_step
 
