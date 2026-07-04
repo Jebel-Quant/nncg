@@ -5,6 +5,38 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com),
 and entries are generated from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.2.2] - 2026-07-04
+
+### New Features
+- Type solve_nnqp inner as Literal and reject unknown solvers
+- Support inner="pcg"/"exact" in solve_nnqp_eq
+- Alternative solvers as benchmark baselines (osqp, clarabel, lawson-hanson, duchi)
+- Add FISTA baseline, share accelerated proximal-gradient core with Duchi
+
+### Bug Fixes
+- Address rcond recomputation, PCG test flakiness, eq API symmetry
+- Restore indentation mangled by automated PR-fix commits
+
+### Documentation
+- Add marimo notebooks to the companion book
+- Inline planted-optimum generators in notebook 03, add matplotlib dev dep
+- Explain in krylov.py why CG/PCG stay in-house vs scipy (#22)
+
+### Other Changes
+- Potential fix for pull request finding
+- Potential fix for pull request finding
+- Potential fix for pull request finding
+- Merge pull request #15 from Jebel-Quant/docs/marimo-notebooks
+- Merge pull request #16 from Jebel-Quant/inner-solver-literal
+- Merge pull request #17 from Jebel-Quant/eq-inner-solver
+- Potential fix for pull request finding
+- Potential fix for pull request finding
+- Potential fix for pull request finding
+- Potential fix for pull request finding
+- Potential fix for pull request finding
+- Potential fix for pull request finding
+- Merge pull request #21 from Jebel-Quant/feat/alternative-solvers
+
 ## [0.2.1] - 2026-07-03
 
 ### Bug Fixes
@@ -18,6 +50,7 @@ and entries are generated from [Conventional Commits](https://www.conventionalco
 - Merge pull request #11 from Jebel-Quant/eq-warm-start
 - Merge pull request #14 from Jebel-Quant/bump-cvx-linalg-0.9.6
 - Merge pull request #13 from Jebel-Quant/perf/hoist-free-set-restriction
+- Bump version 0.2.0 → 0.2.1
 
 ## [0.2.0] - 2026-07-03
 
