@@ -131,7 +131,9 @@ def make_simplex_problem(
         unique minimiser of ``min 1/2 x^T A x - b^T x`` over
         ``{x >= 0, 1^T x = beta}`` and ``lam_star`` its scalar multiplier.
     """
-    rng = np.random.default_rng(seed)
+if beta <= 0.0:
+    raise ValueError("beta must be positive")
+rng = np.random.default_rng(seed)
     eig = np.geomspace(1.0, kappa, n)
     q, _ = np.linalg.qr(rng.standard_normal((n, n)))
     a = (q * eig) @ q.T
