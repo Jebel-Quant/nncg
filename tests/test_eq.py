@@ -5,7 +5,7 @@ import pytest
 from cvx.linalg import DenseOperator
 
 from nncg import solve_nnqp_eq
-from tests.problems import make_eq_problem
+from tests.problems import make_eq_problem, make_scaled_eq_problem
 
 
 @pytest.mark.parametrize("p", [1, 3, 8])
@@ -68,6 +68,51 @@ def test_eq_warm_start_survives_support_drift() -> None:
     assert warm.converged
     assert np.max(np.abs(warm.x - cold.x)) < 1e-6
     assert np.linalg.norm(b_eq @ warm.x - c_eq) < 1e-9
+
+
+def test_eq_exact_inner_matches_cg() -> None:
+    """The direct (``inner="exact"``) eq solve matches the CG solve.
+
+    Both recover the planted optimum and settle on the same free set — the
+    equality analogue of the inexactness lemma: the inner accuracy does not
+    change the sign decisions of the outer loop.
+    """
+    a, b, b_eq, c_eq, x_star, _, _ = make_eq_problem(80, 1e4, 3, seed=5)
+    op = DenseOperator(a)
+    r_cg = solve_nnqp_eq(op, b, b_eq, c_eq)
+    r_ex = solve_nnqp_eq(op, b, b_eq, c_eq, inner="exact")
+    assert r_ex.converged
+    assert np.array_equal(r_ex.free, r_cg.free)
+    assert np.max(np.abs(r_ex.x - x_star)) < 1e-6
+    assert np.linalg.norm(b_eq @ r_ex.x - c_eq) < 1e-9
+
+
+def test_eq_pcg_inner_recovers_optimum() -> None:
+    """The Jacobi-preconditioned eq solve recovers the same planted optimum."""
+    a, b, b_eq, c_eq, x_star, _, _ = make_eq_problem(80, 1e4, 3, seed=6)
+    r_pcg = solve_nnqp_eq(DenseOperator(a), b, b_eq, c_eq, inner="pcg")
+    assert r_pcg.converged
+    assert np.max(np.abs(r_pcg.x - x_star)) < 1e-6
+    assert np.linalg.norm(b_eq @ r_pcg.x - c_eq) < 1e-9
+
+
+def test_eq_pcg_beats_cg_under_diagonal_scaling() -> None:
+    """On a diagonally ill-scaled eq problem PCG needs fewer inner iterations."""
+    a, b, b_eq, c_eq, x_star, _, _ = make_scaled_eq_problem(80, 1e2, 1e6, 3, seed=7)
+    op = DenseOperator(a)
+    r_cg = solve_nnqp_eq(op, b, b_eq, c_eq, inner="cg")
+    r_pcg = solve_nnqp_eq(op, b, b_eq, c_eq, inner="pcg")
+    assert r_pcg.converged
+    assert np.max(np.abs(r_pcg.x - x_star)) < 1e-6
+    assert np.max(np.abs(r_cg.x - x_star)) < 1e-6
+    assert r_pcg.inner < r_cg.inner
+
+
+def test_eq_rejects_unknown_inner() -> None:
+    """An unrecognised inner solver is rejected up front, not run as CG."""
+    a, b, b_eq, c_eq, _, _, _ = make_eq_problem(20, 1e2, 1, seed=0)
+    with pytest.raises(ValueError, match="inner must be"):
+        solve_nnqp_eq(DenseOperator(a), b, b_eq, c_eq, inner="nope")  # type: ignore[arg-type]
 
 
 def test_eq_reduced_gradient_certifies() -> None:
