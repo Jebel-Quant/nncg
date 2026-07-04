@@ -79,9 +79,12 @@ def _densify(a: SymmetricOperator) -> Matrix:
     Returns:
         The dense ``n x n`` array of ``A``.
     """
-    n = a.n
-    cols = np.column_stack([a.matvec(e) for e in np.eye(n)])
-    return 0.5 * (cols + cols.T)
+n = a.n
+cols = np.empty((n, n), dtype=float)
+for j in range(n):
+    e = np.zeros(n); e[j] = 1.0
+    cols[:, j] = a.matvec(e)
+return 0.5 * (cols + cols.T)
 
 
 def solve_osqp(
