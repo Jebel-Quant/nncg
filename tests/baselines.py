@@ -281,8 +281,9 @@ def solve_lawson_hanson(
         passive[cand[int(np.argmax(w[cand]))]] = True  # add most-violated index
 
         while True:
-            idx = np.flatnonzero(passive)
-            z_p, k = cg(lambda v, i=idx: mat[np.ix_(i, i)] @ v, rhs[idx], tol=cg_tol)
+idx = np.flatnonzero(passive)
+mat_pp = mat[np.ix_(idx, idx)]
+z_p, k = cg(lambda v, m=mat_pp: m @ v, rhs[idx], tol=cg_tol)
             inner += k
             if z_p.size == 0 or float(np.min(z_p)) > 0.0:
                 x = np.zeros(n)
