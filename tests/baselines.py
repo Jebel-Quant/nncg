@@ -198,15 +198,18 @@ def solve_clarabel(
     p_mat = sparse.triu(sparse.csc_matrix(mat)).tocsc()
     q = -np.asarray(b, dtype=float)
 
-    g_blocks: list[Any] = []
-    h_blocks: list[Vector] = []
-    cones: list[Any] = []
-    p = 0
-    if b_eq is not None and c_eq is not None:
-        p = np.asarray(b_eq).shape[0]
-        g_blocks.append(sparse.csc_matrix(np.asarray(b_eq, dtype=float)))
-        h_blocks.append(np.asarray(c_eq, dtype=float))
-        cones.append(clarabel.ZeroConeT(p))
+if (b_eq is None) != (c_eq is None):
+    raise ValueError("b_eq and c_eq must be provided together")
+
+g_blocks: list[Any] = []
+h_blocks: list[Vector] = []
+cones: list[Any] = []
+p = 0
+if b_eq is not None:
+    p = np.asarray(b_eq).shape[0]
+    g_blocks.append(sparse.csc_matrix(np.asarray(b_eq, dtype=float)))
+    h_blocks.append(np.asarray(c_eq, dtype=float))
+    cones.append(clarabel.ZeroConeT(p))
     g_blocks.append(sparse.csc_matrix(-np.eye(n)))
     h_blocks.append(np.zeros(n))
     cones.append(clarabel.NonnegativeConeT(n))
