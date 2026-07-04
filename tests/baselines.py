@@ -13,8 +13,10 @@ first two also handle the equality-augmented variant ``B x = c``:
 - :func:`solve_lawson_hanson` — the classical Lawson & Hanson (1974) active-set
   NNLS algorithm, with each unconstrained passive-set solve done by the
   in-house CG of :mod:`nncg.krylov` (hence "Lawson-Hanson (cg)").
-- :func:`solve_duchi` — projected-gradient (accelerated) using Duchi et al.'s
-  (2008) exact Euclidean projection onto the simplex ``{x >= 0, 1^T x = beta}``.
+- :func:`solve_fista` — Beck & Teboulle's (2009) accelerated proximal-gradient
+  method (FISTA), the prox being the projection onto the non-negative orthant.
+- :func:`solve_duchi` — the same FISTA core with the prox replaced by Duchi et
+  al.'s (2008) exact projection onto the simplex ``{x >= 0, 1^T x = beta}``.
   Defined **only** for the ``p = 1`` all-ones normalisation constraint.
 
 Each returns a :class:`BaselineResult` carrying the minimiser, an iteration
@@ -26,6 +28,7 @@ Lawson-Hanson / Duchi routines) imports without them installed.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from time import perf_counter
 from typing import Any
@@ -35,6 +38,9 @@ from cvx.linalg import Matrix, SymmetricOperator, Vector
 from numpy.typing import NDArray
 
 from nncg.krylov import cg
+
+Prox = Callable[[Vector], Vector]
+"""A proximal / projection step ``v -> prox(v)`` of a FISTA iteration."""
 
 
 @dataclass(frozen=True)
@@ -292,6 +298,93 @@ def solve_lawson_hanson(
     return BaselineResult(x=x, iters=inner, time_s=elapsed, status=status)
 
 
+def _fista(
+    mat: Matrix,
+    rhs: Vector,
+    prox: Prox,
+    x0: Vector,
+    step: float,
+    tol: float,
+    max_iter: int,
+) -> tuple[Vector, int, str]:
+    """The FISTA accelerated proximal-gradient core shared by the first-order solvers.
+
+    Beck & Teboulle's (2009) FISTA on the smooth part ``1/2 x^T A x - b^T x``
+    (gradient ``A x - b``, step ``1/L``) with the constraint handled by the
+    ``prox`` step — projection onto the non-negative orthant for
+    :func:`solve_fista`, onto the simplex for :func:`solve_duchi`. Nesterov
+    momentum lifts the rate from ``O(kappa)`` to ``O(sqrt(kappa))`` iterations.
+
+    Args:
+        mat: The dense SPD matrix ``A``.
+        rhs: The linear term ``b``.
+        prox: The projection ``v -> prox(v)`` onto the feasible set.
+        x0: Starting point (projected before the first step).
+        step: Fixed step size (``1 / lambda_max(A)`` for the SPD gradient).
+        tol: Relative step-size stopping tolerance ``||x_{k+1}-x_k|| <= tol``.
+        max_iter: Iteration cap.
+
+    Returns:
+        The tuple ``(x, iters, status)``; ``status`` is ``"solved"`` on the
+        step-size exit or ``"max_iter"`` when the cap is hit.
+    """
+    x = prox(x0)
+    y = x.copy()
+    t_mom = 1.0
+    it = 0
+    status = "max_iter"
+    while it < max_iter:
+        it += 1
+        x_new = prox(y - step * (mat @ y - rhs))
+        t_new = 0.5 * (1.0 + np.sqrt(1.0 + 4.0 * t_mom * t_mom))
+        y = x_new + ((t_mom - 1.0) / t_new) * (x_new - x)
+        moved = float(np.linalg.norm(x_new - x))
+        x, t_mom = x_new, t_new
+        if moved <= tol * max(1.0, float(np.linalg.norm(x))):
+            status = "solved"
+            break
+    return x, it, status
+
+
+def solve_fista(
+    a: SymmetricOperator,
+    b: Vector,
+    tol: float = 1e-8,
+    max_iter: int = 200_000,
+    step: float | None = None,
+) -> BaselineResult:
+    """Solve the bound-only NNQP by FISTA, projecting onto the non-negative orthant.
+
+    The general first-order baseline for ``min_{x>=0} 1/2 x^T A x - b^T x``:
+    accelerated proximal gradient (:func:`_fista`) whose prox is the elementwise
+    clip ``max(x, 0)`` — the Euclidean projection onto ``{x >= 0}``. Unlike
+    :func:`solve_duchi` it carries no equality constraint; unlike
+    :func:`solve_lawson_hanson` it never solves a linear system, only matrix
+    products, so it is the reference for the regime where ``A`` is too large to
+    factor.
+
+    Args:
+        a: The SPD operator ``A``.
+        b: The linear term ``b``.
+        tol: Relative step-size stopping tolerance ``||x_{k+1}-x_k|| <= tol``.
+        max_iter: Iteration cap.
+        step: Fixed step size; defaults to ``1 / lambda_max(A)``.
+
+    Returns:
+        A :class:`BaselineResult`; ``iters`` is the projected-gradient step
+        count. ``lam`` is left None (there is no equality constraint).
+    """
+    mat = _densify(a)
+    rhs = np.asarray(b, dtype=float)
+    if step is None:
+        step = 1.0 / float(np.linalg.eigvalsh(mat)[-1])
+
+    t0 = perf_counter()
+    x, it, status = _fista(mat, rhs, lambda v: np.maximum(v, 0.0), np.zeros(a.n), step, tol, max_iter)
+    elapsed = perf_counter() - t0
+    return BaselineResult(x=x, iters=it, time_s=elapsed, status=status)
+
+
 def _project_simplex(v: Vector, beta: float) -> Vector:
     """Euclidean projection onto the scaled simplex ``{x >= 0, 1^T x = beta}``.
 
@@ -322,13 +415,13 @@ def solve_duchi(
 ) -> BaselineResult:
     """Solve the simplex-constrained NNQP by accelerated projected gradient.
 
-    First-order method for ``min 1/2 x^T A x - b^T x`` over the simplex
+    The simplex-constrained sibling of :func:`solve_fista`: the same FISTA core
+    (:func:`_fista`) over ``min 1/2 x^T A x - b^T x`` on the simplex
     ``{x >= 0, 1^T x = beta}`` — the ``p = 1`` all-ones normalisation, and the
-    **only** equality this routine handles. Each step is a gradient move
-    ``A x - b`` at the fixed size ``1/L`` (``L`` the largest eigenvalue of
-    ``A``) followed by the exact Duchi projection :func:`_project_simplex`,
-    accelerated with Nesterov momentum (FISTA) so the count scales with
-    ``O(sqrt(kappa))`` rather than ``O(kappa)``.
+    **only** equality this routine handles — with the prox being the exact
+    Duchi projection :func:`_project_simplex` instead of the orthant clip. The
+    step is ``1/L`` (``L`` the largest eigenvalue of ``A``) and Nesterov
+    momentum gives the ``O(sqrt(kappa))`` rate.
 
     Args:
         a: The SPD operator ``A``.
@@ -348,25 +441,9 @@ def solve_duchi(
     if step is None:
         step = 1.0 / float(np.linalg.eigvalsh(mat)[-1])
 
-    x = _project_simplex(np.full(n, beta / n), beta)
-    y = x.copy()
-    t_mom = 1.0
-    it = 0
-    status = "max_iter"
-
     t0 = perf_counter()
-    while it < max_iter:
-        it += 1
-        x_new = _project_simplex(y - step * (mat @ y - rhs), beta)
-        t_new = 0.5 * (1.0 + np.sqrt(1.0 + 4.0 * t_mom * t_mom))
-        y = x_new + ((t_mom - 1.0) / t_new) * (x_new - x)
-        moved = float(np.linalg.norm(x_new - x))
-        x, t_mom = x_new, t_new
-        if moved <= tol * max(1.0, float(np.linalg.norm(x))):
-            status = "solved"
-            break
+    x, it, status = _fista(mat, rhs, lambda v: _project_simplex(v, beta), np.full(n, beta / n), step, tol, max_iter)
     elapsed = perf_counter() - t0
-
     return BaselineResult(x=x, iters=it, time_s=elapsed, status=status)
 
 

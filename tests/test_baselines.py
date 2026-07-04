@@ -50,6 +50,17 @@ def test_lawson_hanson_recovers_bound_plant(seed: int) -> None:
     assert np.array_equal(r.x > 1e-9, x_star > 0)
 
 
+@pytest.mark.parametrize("seed", [0, 1, 2])
+def test_fista_recovers_bound_plant(seed: int) -> None:
+    """FISTA (orthant projection) recovers the bound-only planted optimum."""
+    a, b, x_star, _ = make_problem(60, 1e2, seed=seed)
+    op = DenseOperator(a)
+    r = bl.solve_fista(op, b, tol=1e-10)
+    assert r.status == "solved"
+    assert np.all(r.x >= -1e-9)
+    assert np.max(np.abs(r.x - x_star)) < _ERR
+
+
 def test_baselines_agree_with_nncg_bound_only() -> None:
     """All bound-only solvers land on the same minimiser as ``solve_nnqp``."""
     pytest.importorskip("osqp")
@@ -59,6 +70,13 @@ def test_baselines_agree_with_nncg_bound_only() -> None:
     ref = solve_nnqp(op, b).x
     for solve in (bl.solve_osqp, bl.solve_clarabel, bl.solve_lawson_hanson):
         assert np.max(np.abs(solve(op, b).x - ref)) < _ERR
+
+
+def test_fista_agrees_with_nncg_well_conditioned() -> None:
+    """On a well-conditioned instance FISTA reaches ``solve_nnqp``'s minimiser."""
+    a, b, _, _ = make_problem(60, 30.0, seed=6)
+    op = DenseOperator(a)
+    assert np.max(np.abs(bl.solve_fista(op, b, tol=1e-11).x - solve_nnqp(op, b).x)) < _ERR
 
 
 @pytest.mark.parametrize("seed", [0, 1, 2])

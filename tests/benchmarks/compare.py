@@ -77,7 +77,8 @@ def _bound_rows(op: SymmetricOperator, b: Vector, x_star: Vector, label: str) ->
             "solved" if r.converged else "capped",
         )
     )
-    for name, fn in [*_optional_bound_solvers(), ("lawson-hanson (cg)", bl.solve_lawson_hanson)]:
+    always = [("lawson-hanson (cg)", bl.solve_lawson_hanson), ("fista", bl.solve_fista)]
+    for name, fn in [*_optional_bound_solvers(), *always]:
         res = fn(op, b)
         rows.append(
             Row(

@@ -33,7 +33,7 @@ def _(mo):
 
         `nncg` is not the only way to solve the non-negative quadratic program
         $\min_{x\ge0}\tfrac12 x^\top A x - b^\top x$. This notebook lines it up
-        against four established alternatives on the *same* planted-optimum
+        against five established alternatives on the *same* planted-optimum
         problems the test suite uses, so "correct" means **recovering the known
         $x^\star$** and the interesting axis is *cost* — iterations, wall-clock,
         and accuracy.
@@ -44,7 +44,8 @@ def _(mo):
         | **OSQP** | operator splitting (ADMM) | yes, any $p$ |
         | **Clarabel** | interior-point (conic) | yes, any $p$ |
         | **Lawson–Hanson** | classical active-set NNLS, CG inner solves | no (bound-only) |
-        | **Duchi** | projected gradient, exact simplex projection | **only $p=1$** |
+        | **FISTA** | accelerated proximal gradient, orthant projection | no (bound-only) |
+        | **Duchi** | FISTA with an exact simplex projection | **only $p=1$** |
 
         The last one is special: Duchi et al.'s (2008) $O(n\log n)$ projection is
         onto the simplex $\{x\ge0,\ \mathbf 1^\top x=\beta\}$, so the first-order
@@ -198,6 +199,28 @@ def _(cg, clarabel, np, osqp, sparse):
                 x[~passive] = 0.0
         return {"x": x, "iters": inner, "time_s": perf_counter() - t0}
 
+    def fista(a, b, prox, x0, tol=1e-9, max_iter=200000):
+        """FISTA accelerated proximal gradient on 1/2 x'Ax - b'x; prox is the projection."""
+        step = 1.0 / float(np.linalg.eigvalsh(a)[-1])
+        x = prox(x0)
+        y, t_mom, it = x.copy(), 1.0, 0
+        while it < max_iter:
+            it += 1
+            x_new = prox(y - step * (a @ y - b))
+            t_new = 0.5 * (1.0 + np.sqrt(1.0 + 4.0 * t_mom * t_mom))
+            y = x_new + ((t_mom - 1.0) / t_new) * (x_new - x)
+            moved = float(np.linalg.norm(x_new - x))
+            x, t_mom = x_new, t_new
+            if moved <= tol * max(1.0, float(np.linalg.norm(x))):
+                break
+        return x, it
+
+    def solve_fista(a, b, tol=1e-9):
+        """FISTA for the bound-only NNQP: prox is the projection onto {x >= 0}."""
+        t0 = perf_counter()
+        x, it = fista(a, b, lambda v: np.maximum(v, 0.0), np.zeros(a.shape[0]), tol=tol)
+        return {"x": x, "iters": it, "time_s": perf_counter() - t0}
+
     def project_simplex(v, beta):
         """Exact Euclidean projection onto {x >= 0, 1^T x = beta} (Duchi 2008)."""
         u = np.sort(v)[::-1]
@@ -205,25 +228,13 @@ def _(cg, clarabel, np, osqp, sparse):
         rho = int(np.nonzero(u - css / np.arange(1, v.size + 1) > 0)[0][-1])
         return np.maximum(v - css[rho] / (rho + 1.0), 0.0)
 
-    def solve_duchi(a, b, beta=1.0, tol=1e-9, max_iter=200000):
-        """Accelerated (FISTA) projected gradient on the p=1 simplex."""
-        n = a.shape[0]
-        step = 1.0 / float(np.linalg.eigvalsh(a)[-1])
-        x = project_simplex(np.full(n, beta / n), beta)
-        y, t_mom, it = x.copy(), 1.0, 0
+    def solve_duchi(a, b, beta=1.0, tol=1e-9):
+        """Same FISTA core with the prox replaced by the Duchi simplex projection (p=1)."""
         t0 = perf_counter()
-        while it < max_iter:
-            it += 1
-            x_new = project_simplex(y - step * (a @ y - b), beta)
-            t_new = 0.5 * (1.0 + np.sqrt(1.0 + 4.0 * t_mom * t_mom))
-            y = x_new + ((t_mom - 1.0) / t_new) * (x_new - x)
-            moved = float(np.linalg.norm(x_new - x))
-            x, t_mom = x_new, t_new
-            if moved <= tol * max(1.0, float(np.linalg.norm(x))):
-                break
+        x, it = fista(a, b, lambda v: project_simplex(v, beta), np.full(a.shape[0], beta / a.shape[0]), tol=tol)
         return {"x": x, "iters": it, "time_s": perf_counter() - t0}
 
-    return solve_clarabel, solve_duchi, solve_lawson_hanson, solve_osqp
+    return solve_clarabel, solve_duchi, solve_fista, solve_lawson_hanson, solve_osqp
 
 
 @app.cell
@@ -244,7 +255,18 @@ def _(mo):
 
 
 @app.cell
-def _(DenseOperator, kkt_violation, make_problem, np, plt, solve_clarabel, solve_lawson_hanson, solve_nnqp, solve_osqp):
+def _(
+    DenseOperator,
+    kkt_violation,
+    make_problem,
+    np,
+    plt,
+    solve_clarabel,
+    solve_fista,
+    solve_lawson_hanson,
+    solve_nnqp,
+    solve_osqp,
+):
     _a, _b, _xs = make_problem(200, 1e3, seed=0)
     _op = DenseOperator(_a)
     _scale = 1.0 + float(np.linalg.norm(_b))
@@ -259,6 +281,7 @@ def _(DenseOperator, kkt_violation, make_problem, np, plt, solve_clarabel, solve
         "osqp": solve_osqp(_a, _b),
         "clarabel": solve_clarabel(_a, _b),
         "lawson-\nhanson": solve_lawson_hanson(_a, _b),
+        "fista": solve_fista(_a, _b),
     }
     _names = list(_results)
     _times = [_results[k]["time_s"] * 1e3 for k in _names]
@@ -290,7 +313,10 @@ def _(mo):
         `nncg` and Clarabel are typically fastest; Lawson–Hanson is correct but
         pays for exchanging **one** index per outer step (where `nncg`'s block
         pivots swap many at once), so its CG bill is far higher. OSQP reaches
-        machine accuracy after polishing.
+        machine accuracy after polishing. **FISTA** never touches a linear
+        system — only matrix–vector products — so it is the honest reference for
+        the regime where $A$ is too large to factor, at the cost of the most
+        iterations (its $O(\sqrt\kappa)$ rate is the price of first order).
 
         ## The $p=1$ simplex: adding Duchi
 
@@ -365,8 +391,10 @@ def _(mo):
           but they form/factor the matrix.
         - **Lawson–Hanson (cg)** — the classical single-exchange active-set
           method; the direct ancestor of the block-pivot loop.
-        - **Duchi** — the $p=1$-only first-order method; the scalable,
-          projection-based baseline.
+        - **FISTA** — the matrix-free accelerated proximal-gradient baseline for
+          the bound-only problem (prox = projection onto $\{x\ge0\}$).
+        - **Duchi** — the same FISTA core with a simplex projection; the
+          $p=1$-only scalable baseline.
 
         These baselines live in `tests/baselines.py`; the comparison table is
         `tests/benchmarks/compare.py` (run `uv run python -m
