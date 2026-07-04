@@ -53,7 +53,9 @@ def test_pcg_inner_solve() -> None:
     r_pcg = solve_nnqp(DenseOperator(a), b, inner="pcg")
     assert np.max(np.abs(r_cg.x - x_star)) < 1e-6
     assert np.max(np.abs(r_pcg.x - x_star)) < 1e-6
-    assert r_pcg.inner < r_cg.inner
+    # A comfortable margin, not a bare `<`: the exact counts vary with the BLAS
+    # backend, but Jacobi removes a 1e4 diagonal spread, so the win is large.
+    assert r_pcg.inner <= 0.7 * r_cg.inner
 
 
 def test_max_outer_cap_reports_nonconvergence() -> None:

@@ -149,14 +149,20 @@ def _make_free_solve(
         msg = f"inner must be 'cg', 'pcg', or 'exact'; got {inner!r}"
         raise ValueError(msg)
     dinv: Vector | None = None  # Jacobi preconditioner, read off op.diag on first use
+    checked: NDArray[np.int_] | None = None  # last free set whose SPD-ness was verified
 
     def free_solve(idx: NDArray[np.int_], rhs: Vector, x0: Vector | None) -> tuple[Vector, int]:
-        nonlocal dinv
+        nonlocal dinv, checked
         if inner == "exact":
-            rcond = op.rcond_free(idx)
-            if rcond < _RCOND_MIN:
-                msg = f"free block of size {idx.size} is numerically singular (rcond={rcond:.2e})"
-                raise ValueError(msg)
+            # The rcond guard depends only on the free set, not the right-hand
+            # side, so verify it once per free set — solve_nnqp_eq drives p + 1
+            # solves through the same idx and must not pay for p + 1 estimates.
+            if checked is None or not np.array_equal(checked, idx):
+                rcond = op.rcond_free(idx)
+                if rcond < _RCOND_MIN:
+                    msg = f"free block of size {idx.size} is numerically singular (rcond={rcond:.2e})"
+                    raise ValueError(msg)
+                checked = idx
             return op.solve_free(idx, rhs), 1
         if inner == "pcg":
             if dinv is None:
@@ -420,7 +426,9 @@ def solve_nnqp_eq(
     cg_tol: float = 1e-10,
     p_max: int = 3,
     inner: InnerSolver = "cg",
+    track: bool = False,
     cg_maxit: int = 100_000,
+    max_outer: int | None = None,
     warm: tuple[NDArray[np.bool_], Vector] | None = None,
 ) -> Result:
     """Solve ``min 1/2 x^T A x - b^T x`` subject to ``x >= 0`` and ``B x = c``.
@@ -445,7 +453,10 @@ def solve_nnqp_eq(
             right-hand sides — ``"cg"`` (matrix-free), ``"pcg"`` (Jacobi from
             ``op.diag``), or ``"exact"`` (direct ``op.solve_free``); the same
             choice :func:`solve_nnqp` offers.
+        track: Record the free-set trajectory in ``Result.traj``.
         cg_maxit: Iteration cap per inner CG/PCG solve.
+        max_outer: Optional cap on outer steps; when hit, the current iterate
+            is returned with ``converged=False``.
         warm: Optional ``(free_mask, x_prev)`` pair from a previous solve —
             the same tuple :func:`solve_nnqp` accepts. Starts the loop from
             that free set and seeds the ``v0`` solve of every saddle step
@@ -490,4 +501,13 @@ def solve_nnqp_eq(
         correction = b_eq.T @ lam if lam is not None else np.zeros_like(b)
         return op.matvec(x) - b - correction
 
-    return _active_set_loop(len(b), sub_solve, reduced_gradient, tol=tol, p_max=p_max, warm=warm)
+    return _active_set_loop(
+        len(b),
+        sub_solve,
+        reduced_gradient,
+        tol=tol,
+        p_max=p_max,
+        track=track,
+        max_outer=max_outer,
+        warm=warm,
+    )

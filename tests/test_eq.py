@@ -105,7 +105,27 @@ def test_eq_pcg_beats_cg_under_diagonal_scaling() -> None:
     assert r_pcg.converged
     assert np.max(np.abs(r_pcg.x - x_star)) < 1e-6
     assert np.max(np.abs(r_cg.x - x_star)) < 1e-6
-    assert r_pcg.inner < r_cg.inner
+    # A comfortable margin, not a bare `<`: the 1e6 diagonal spread makes the
+    # Jacobi win large enough to survive BLAS-dependent iteration-count drift.
+    assert r_pcg.inner <= 0.7 * r_cg.inner
+
+
+def test_eq_track_records_trajectory() -> None:
+    """``track=True`` records the visited free sets, ending on the converged one."""
+    a, b, b_eq, c_eq, _, _, _ = make_eq_problem(60, 1e3, 3, seed=8)
+    res = solve_nnqp_eq(DenseOperator(a), b, b_eq, c_eq, track=True)
+    assert res.converged
+    assert res.traj is not None
+    assert len(res.traj) == res.outer  # one recorded free set per outer step
+    assert np.array_equal(res.traj[-1], np.flatnonzero(res.free))  # last = converged support
+
+
+def test_eq_max_outer_caps_the_loop() -> None:
+    """``max_outer`` stops the loop early and reports non-convergence."""
+    a, b, b_eq, c_eq, _, _, _ = make_eq_problem(80, 1e5, 3, seed=9)
+    res = solve_nnqp_eq(DenseOperator(a), b, b_eq, c_eq, max_outer=1)
+    assert not res.converged
+    assert res.outer == 1
 
 
 def test_eq_rejects_unknown_inner() -> None:
