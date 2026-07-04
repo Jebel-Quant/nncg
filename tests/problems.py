@@ -101,6 +101,58 @@ def make_eq_problem(
     return a, b, b_eq, c_eq, x_star, lam_star, s_star
 
 
+def make_simplex_problem(
+    n: int,
+    kappa: float,
+    beta: float = 1.0,
+    support_frac: float = 0.5,
+    seed: int = 0,
+) -> tuple[Matrix, Vector, float, Vector, float, Vector]:
+    """Planted optimum on the scaled simplex ``{x >= 0, 1^T x = beta}``.
+
+    The ``p = 1`` equality-augmented plant whose single constraint is the
+    all-ones normalisation ``1^T x = beta`` — the shared fixture for comparing
+    the equality solvers (``solve_nnqp_eq`` with ``B = 1^T``, OSQP, Clarabel)
+    against the simplex-restricted first-order method (Duchi), which is defined
+    only for this constraint. ``A`` is built as in :func:`make_problem`; a
+    support of size at least two carries ``x* > 0`` rescaled to sum to
+    ``beta``, ``s* = 0`` there and positive off it, ``lambda*`` is a scalar,
+    and ``b = A x* - lambda* 1 - s*``.
+
+    Args:
+        n: Problem dimension.
+        kappa: Spectral condition number of ``A``.
+        beta: Target of the normalisation ``1^T x = beta`` (the simplex scale).
+        support_frac: Fraction of indices in the optimal support.
+        seed: Seed of the random generator.
+
+    Returns:
+        The tuple ``(A, b, beta, x_star, lam_star, s_star)``; ``x_star`` is the
+        unique minimiser of ``min 1/2 x^T A x - b^T x`` over
+        ``{x >= 0, 1^T x = beta}`` and ``lam_star`` its scalar multiplier.
+    """
+    if beta <= 0.0:
+        msg = "beta must be positive"
+        raise ValueError(msg)
+    rng = np.random.default_rng(seed)
+    eig = np.geomspace(1.0, kappa, n)
+    q, _ = np.linalg.qr(rng.standard_normal((n, n)))
+    a = (q * eig) @ q.T
+    a = 0.5 * (a + a.T)
+
+    k = max(2, round(support_frac * n))
+    perm = rng.permutation(n)
+    supp, off = perm[:k], perm[k:]
+    x_star = np.zeros(n)
+    x_star[supp] = rng.uniform(0.5, 1.5, size=k)
+    x_star[supp] *= beta / x_star[supp].sum()  # enforce 1^T x* = beta
+    s_star = np.zeros(n)
+    s_star[off] = rng.uniform(0.5, 1.5, size=n - k)
+    lam_star = float(rng.standard_normal())
+    b = a @ x_star - lam_star * np.ones(n) - s_star
+    return a, b, beta, x_star, lam_star, s_star
+
+
 def make_adversarial(
     n: int,
     seed: int = 0,

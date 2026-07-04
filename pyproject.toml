@@ -29,6 +29,11 @@ Paper = "https://github.com/Jebel-Quant/mean_variance_solvers"
 dev = [
     "marimo>=0.18.0",  # drives `make book` notebook export (book/marimo/notebooks/)
     "matplotlib>=3.8",  # notebooks plot with matplotlib (book/marimo/notebooks/)
+    # Baseline solvers for the numerical study (tests/baselines.py, notebook 04).
+    # Not runtime deps: the library itself stays NumPy + cvx-linalg only.
+    "osqp>=1.0",  # operator-splitting (ADMM) QP baseline
+    "clarabel>=0.9",  # interior-point conic QP baseline
+    "scipy>=1.11",  # sparse matrices OSQP/Clarabel consume
 ]
 test = [
     "pytest>=7.0",
@@ -56,3 +61,6 @@ ignore-nested-classes = true
 [tool.deptry.package_module_name_map]
 numpy = "numpy"
 cvx-linalg = "cvx"
+osqp = "osqp"
+clarabel = "clarabel"
+scipy = "scipy"
