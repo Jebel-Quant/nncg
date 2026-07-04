@@ -12,10 +12,9 @@
 # nncg = { path = "../../..", editable = true }
 # ///
 #
-# The `tests.problems` module lives at the repository root (outside the
-# installed package); the import cell below locates the repo root and puts it
-# on sys.path, so this notebook runs both under `make book` (marimo export
-# --sandbox, cwd = book/marimo/notebooks) and via `uv run marimo edit`.
+# The planted-optimum generators documented here live in `tests/problems.py`
+# (outside the installed package). They are reproduced inline below so this
+# notebook is self-contained and runs anywhere without touching sys.path.
 import marimo
 
 __generated_with = "0.23.13"
@@ -61,25 +60,73 @@ def _():
 
 
 @app.cell
-def _():
-    # Import the real generators from the test suite. Requires the repo root on
-    # sys.path; add it defensively so the notebook runs from anywhere.
-    import sys
-    from pathlib import Path
+def _(np):
+    # Inlined copies of the four generators from tests/problems.py, so this
+    # notebook is self-contained. Kept in step with the test suite — if you
+    # change a plant, change it in both places.
+    def make_problem(n, kappa, support_frac=0.5, seed=0):
+        """Random SPD problem with prescribed condition number and planted optimum."""
+        rng = np.random.default_rng(seed)
+        eig = np.geomspace(1.0, kappa, n)
+        q, _ = np.linalg.qr(rng.standard_normal((n, n)))
+        a = (q * eig) @ q.T
+        a = 0.5 * (a + a.T)
 
-    _here = Path.cwd()
-    for _cand in (_here, *_here.parents):
-        if (_cand / "tests" / "problems.py").exists():
-            if str(_cand) not in sys.path:
-                sys.path.insert(0, str(_cand))
-            break
+        k = max(1, round(support_frac * n))
+        perm = rng.permutation(n)
+        supp = perm[:k]
 
-    from tests.problems import (
-        make_adversarial,
-        make_eq_problem,
-        make_problem,
-        make_scaled_problem,
-    )
+        x_star = np.zeros(n)
+        x_star[supp] = rng.uniform(0.5, 1.5, size=k)
+        s_star = np.zeros(n)
+        off = perm[k:]
+        s_star[off] = rng.uniform(0.5, 1.5, size=n - k)
+        b = a @ x_star - s_star
+        return a, b, x_star, s_star
+
+    def make_eq_problem(n, kappa, p, support_frac=0.5, seed=0):
+        """Equality-augmented planted problem for min f(x) s.t. Bx = c, x >= 0."""
+        rng = np.random.default_rng(seed)
+        eig = np.geomspace(1.0, kappa, n)
+        q, _ = np.linalg.qr(rng.standard_normal((n, n)))
+        a = (q * eig) @ q.T
+        a = 0.5 * (a + a.T)
+        k = max(p + 1, round(support_frac * n))
+        perm = rng.permutation(n)
+        supp, off = perm[:k], perm[k:]
+        x_star = np.zeros(n)
+        x_star[supp] = rng.uniform(0.5, 1.5, size=k)
+        s_star = np.zeros(n)
+        s_star[off] = rng.uniform(0.5, 1.5, size=n - k)
+        b_eq = rng.standard_normal((p, n))
+        lam_star = rng.standard_normal(p)
+        b = a @ x_star - b_eq.T @ lam_star - s_star
+        c_eq = b_eq @ x_star
+        return a, b, b_eq, c_eq, x_star, lam_star, s_star
+
+    def make_adversarial(n, seed=0, noise=1e-2, ridge=1e-6):
+        """Anti-correlated design on which the unguarded batch path cycles."""
+        rng = np.random.default_rng(seed)
+        m0 = rng.standard_normal((n, n // 2))
+        m = np.hstack([m0, -m0 + noise * rng.standard_normal((n, n // 2))])
+        a = m.T @ m + ridge * np.eye(n)
+        return a, m.T @ rng.standard_normal(n)
+
+    def make_scaled_problem(n, kappa_core, spread, support_frac=0.5, seed=0):
+        """Well-conditioned core under a bad diagonal scaling, with planted optimum."""
+        rng = np.random.default_rng(seed)
+        eig = np.geomspace(1.0, kappa_core, n)
+        q, _ = np.linalg.qr(rng.standard_normal((n, n)))
+        core = 0.5 * ((q * eig) @ q.T + ((q * eig) @ q.T).T)
+        d = rng.permutation(np.geomspace(1.0, spread, n))
+        a = core * np.sqrt(np.outer(d, d))
+        k = max(1, round(support_frac * n))
+        perm = rng.permutation(n)
+        x_star = np.zeros(n)
+        x_star[perm[:k]] = rng.uniform(0.5, 1.5, size=k)
+        s_star = np.zeros(n)
+        s_star[perm[k:]] = rng.uniform(0.5, 1.5, size=n - k)
+        return a, a @ x_star - s_star, x_star
 
     return make_adversarial, make_eq_problem, make_problem, make_scaled_problem
 

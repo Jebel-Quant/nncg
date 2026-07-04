@@ -28,6 +28,7 @@ Paper = "https://github.com/Jebel-Quant/mean_variance_solvers"
 [dependency-groups]
 dev = [
     "marimo>=0.18.0",  # drives `make book` notebook export (book/marimo/notebooks/)
+    "matplotlib>=3.8",  # notebooks plot with matplotlib (book/marimo/notebooks/)
 ]
 test = [
     "pytest>=7.0",
