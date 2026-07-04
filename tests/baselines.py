@@ -79,12 +79,13 @@ def _densify(a: SymmetricOperator) -> Matrix:
     Returns:
         The dense ``n x n`` array of ``A``.
     """
-n = a.n
-cols = np.empty((n, n), dtype=float)
-for j in range(n):
-    e = np.zeros(n); e[j] = 1.0
-    cols[:, j] = a.matvec(e)
-return 0.5 * (cols + cols.T)
+    n = a.n
+    cols = np.empty((n, n), dtype=float)
+    for j in range(n):
+        e = np.zeros(n)
+        e[j] = 1.0
+        cols[:, j] = a.matvec(e)
+    return 0.5 * (cols + cols.T)
 
 
 def solve_osqp(
@@ -123,16 +124,17 @@ def solve_osqp(
     p_mat = sparse.triu(sparse.csc_matrix(mat)).tocsc()
     q = -np.asarray(b, dtype=float)
 
-if (b_eq is None) != (c_eq is None):
-    raise ValueError("b_eq and c_eq must be provided together")
+    if (b_eq is None) != (c_eq is None):
+        msg = "b_eq and c_eq must be provided together"
+        raise ValueError(msg)
 
-blocks: list[Any] = [sparse.eye(n, format="csc")]
-lo: list[Vector] = [np.zeros(n)]
-hi: list[Vector] = [np.full(n, np.inf)]
-if b_eq is not None:
-    blocks.append(sparse.csc_matrix(np.asarray(b_eq, dtype=float)))
-    lo.append(np.asarray(c_eq, dtype=float))
-    hi.append(np.asarray(c_eq, dtype=float))
+    blocks: list[Any] = [sparse.eye(n, format="csc")]
+    lo: list[Vector] = [np.zeros(n)]
+    hi: list[Vector] = [np.full(n, np.inf)]
+    if b_eq is not None:
+        blocks.append(sparse.csc_matrix(np.asarray(b_eq, dtype=float)))
+        lo.append(np.asarray(c_eq, dtype=float))
+        hi.append(np.asarray(c_eq, dtype=float))
     a_con = sparse.vstack(blocks, format="csc")
     lower, upper = np.concatenate(lo), np.concatenate(hi)
 
@@ -198,18 +200,19 @@ def solve_clarabel(
     p_mat = sparse.triu(sparse.csc_matrix(mat)).tocsc()
     q = -np.asarray(b, dtype=float)
 
-if (b_eq is None) != (c_eq is None):
-    raise ValueError("b_eq and c_eq must be provided together")
+    if (b_eq is None) != (c_eq is None):
+        msg = "b_eq and c_eq must be provided together"
+        raise ValueError(msg)
 
-g_blocks: list[Any] = []
-h_blocks: list[Vector] = []
-cones: list[Any] = []
-p = 0
-if b_eq is not None:
-    p = np.asarray(b_eq).shape[0]
-    g_blocks.append(sparse.csc_matrix(np.asarray(b_eq, dtype=float)))
-    h_blocks.append(np.asarray(c_eq, dtype=float))
-    cones.append(clarabel.ZeroConeT(p))
+    g_blocks: list[Any] = []
+    h_blocks: list[Vector] = []
+    cones: list[Any] = []
+    p = 0
+    if b_eq is not None:
+        p = np.asarray(b_eq).shape[0]
+        g_blocks.append(sparse.csc_matrix(np.asarray(b_eq, dtype=float)))
+        h_blocks.append(np.asarray(c_eq, dtype=float))
+        cones.append(clarabel.ZeroConeT(p))
     g_blocks.append(sparse.csc_matrix(-np.eye(n)))
     h_blocks.append(np.zeros(n))
     cones.append(clarabel.NonnegativeConeT(n))
@@ -284,9 +287,9 @@ def solve_lawson_hanson(
         passive[cand[int(np.argmax(w[cand]))]] = True  # add most-violated index
 
         while True:
-idx = np.flatnonzero(passive)
-mat_pp = mat[np.ix_(idx, idx)]
-z_p, k = cg(lambda v, m=mat_pp: m @ v, rhs[idx], tol=cg_tol)
+            idx = np.flatnonzero(passive)
+            mat_pp = mat[np.ix_(idx, idx)]
+            z_p, k = cg(lambda v, m=mat_pp: m @ v, rhs[idx], tol=cg_tol)
             inner += k
             if z_p.size == 0 or float(np.min(z_p)) > 0.0:
                 x = np.zeros(n)
@@ -408,13 +411,14 @@ def _project_simplex(v: Vector, beta: float) -> Vector:
     Returns:
         ``argmin_{x >= 0, 1^T x = beta} ||x - v||_2``.
     """
-if beta <= 0.0:
-    raise ValueError("beta must be positive for simplex projection")
-u = np.sort(v)[::-1]
-css = np.cumsum(u) - beta
-rho = int(np.nonzero(u - css / np.arange(1, v.size + 1) > 0)[0][-1])
-theta = css[rho] / (rho + 1.0)
-return np.maximum(v - theta, 0.0)
+    if beta <= 0.0:
+        msg = "beta must be positive for simplex projection"
+        raise ValueError(msg)
+    u = np.sort(v)[::-1]
+    css = np.cumsum(u) - beta
+    rho = int(np.nonzero(u - css / np.arange(1, v.size + 1) > 0)[0][-1])
+    theta = css[rho] / (rho + 1.0)
+    return np.maximum(v - theta, 0.0)
 
 
 def solve_duchi(
