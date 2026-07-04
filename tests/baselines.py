@@ -408,11 +408,13 @@ def _project_simplex(v: Vector, beta: float) -> Vector:
     Returns:
         ``argmin_{x >= 0, 1^T x = beta} ||x - v||_2``.
     """
-    u = np.sort(v)[::-1]
-    css = np.cumsum(u) - beta
-    rho = int(np.nonzero(u - css / np.arange(1, v.size + 1) > 0)[0][-1])
-    theta = css[rho] / (rho + 1.0)
-    return np.maximum(v - theta, 0.0)
+if beta <= 0.0:
+    raise ValueError("beta must be positive for simplex projection")
+u = np.sort(v)[::-1]
+css = np.cumsum(u) - beta
+rho = int(np.nonzero(u - css / np.arange(1, v.size + 1) > 0)[0][-1])
+theta = css[rho] / (rho + 1.0)
+return np.maximum(v - theta, 0.0)
 
 
 def solve_duchi(
