@@ -16,6 +16,19 @@ from cvx.linalg import Vector
 
 MatVec = Callable[[Vector], Vector]
 
+# Why in-house rather than scipy.sparse.linalg.cg? scipy's CG is matrix-free
+# and preconditionable too, so functionally it could stand in here. We keep our
+# own for four reasons: (1) the matrix-free CG/PCG is this package's core
+# contribution — the reference implementation of the paper — and must stay
+# auditable, not delegated to a black box; (2) the runtime dependency set is
+# NumPy + cvx-linalg only, and this is ~90 lines NumPy already covers; (3) we
+# return the iteration count, which the numerical study asserts on, whereas
+# scipy returns only a convergence flag (recovering the count needs a callback);
+# (4) scipy's atol/rtol stopping semantics have shifted across releases, so
+# owning the loop pins the exact criterion and keeps the paper's numbers stable.
+# Third-party solvers belong in the baseline comparisons (tests/baselines.py),
+# not in this inner Krylov core.
+
 
 def cg(
     matvec: MatVec,
