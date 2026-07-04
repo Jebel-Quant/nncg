@@ -31,6 +31,10 @@ plugins:
 nav:
   - Home: index.md
   - API reference: api.md
+  - Notebooks:
+    - Active-set methods: notebooks/01_active_set_methods.html
+    - Equality constraints: notebooks/02_equality_constraints.html
+    - Test problems: notebooks/03_test_problems.html
   - Reports:
     - Test report: reports/html-report/report.html
     - Coverage report: reports/html-coverage/index.html
