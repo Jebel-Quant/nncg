@@ -5,6 +5,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com),
 and entries are generated from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.3.0] - 2026-07-05
+
+### Maintenance
+- Remove baseline comparison suite (maintained in mean_variance_solvers) (#23)
+
 ## [0.2.2] - 2026-07-04
 
 ### New Features
@@ -36,6 +41,7 @@ and entries are generated from [Conventional Commits](https://www.conventionalco
 - Potential fix for pull request finding
 - Potential fix for pull request finding
 - Merge pull request #21 from Jebel-Quant/feat/alternative-solvers
+- Bump version 0.2.1 → 0.2.2
 
 ## [0.2.1] - 2026-07-03
 
