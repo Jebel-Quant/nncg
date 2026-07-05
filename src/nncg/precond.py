@@ -140,16 +140,18 @@ def nystrom(
     is built for one fixed SPD system; the active-set loop's free blocks each
     differ, so wiring it there would rebuild the sketch every outer step.
 
-    Unlike :func:`jacobi` / :func:`inverse_diagonal`, this builder takes a bare
-    ``matvec`` (with an explicit ``n``) rather than a
-    :class:`cvx.linalg.SymmetricOperator`. The rule across this module is that
-    each builder asks only for the capability it needs: the diagonal
-    preconditioners need ``op.diag`` — not recoverable from products without
-    ``n`` probe mat-vecs — so they require the operator, whereas Nyström is
-    intrinsically matrix-free (a handful of products *is* the algorithm) and
-    needs nothing more. Keeping it mat-vec based also lets the ``inner="nystrom"``
-    inner solver precondition each free block ``A[F, F]`` directly, on backends
-    that expose only the free-block action and no restricted operator.
+    Like :func:`identity`, :func:`diagonal` and :func:`jacobi`, this is a
+    *builder*: it returns the ``r -> M^{-1} r`` callable (the
+    :data:`~nncg.krylov.Preconditioner` that :func:`pcg` applies), and differs
+    from the others only in the *input* it consumes to construct one. It takes a
+    bare ``matvec`` (with an explicit ``n``) rather than a
+    :class:`cvx.linalg.SymmetricOperator` because each builder asks only for the
+    capability it needs: the diagonal builders need ``op.diag`` — not recoverable
+    from products without ``n`` probe mat-vecs — so they require the operator,
+    whereas Nyström is intrinsically matrix-free (a handful of products *is* the
+    algorithm). Keeping it mat-vec based also lets the ``inner="nystrom"`` inner
+    solver precondition each free block ``A[F, F]`` directly, on backends that
+    expose only the free-block action and no restricted operator.
 
     Args:
         matvec: The action ``v -> A v`` of the SPD operator to precondition.
