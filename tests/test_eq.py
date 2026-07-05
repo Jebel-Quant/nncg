@@ -125,6 +125,19 @@ def test_eq_pcg_inner_recovers_optimum() -> None:
     assert np.linalg.norm(b_eq @ r_pcg.x - c_eq) < 1e-9
 
 
+def test_eq_nystrom_inner_recovers_optimum() -> None:
+    """The Nyström-preconditioned eq solve recovers the same planted optimum.
+
+    Exercises the per-free-set sketch cache: each saddle step drives ``p + 1``
+    right-hand sides through the same ``A_F``, and the sketch is built once.
+    """
+    a, b, b_eq, c_eq, x_star, _, _ = make_eq_problem(80, 1e4, 3, seed=6)
+    r_ny = solve_nnqp_eq(DenseOperator(a), b, b_eq, c_eq, inner="nystrom", nystrom_rank=15)
+    assert r_ny.converged
+    assert np.max(np.abs(r_ny.x - x_star)) < 1e-6
+    assert np.linalg.norm(b_eq @ r_ny.x - c_eq) < 1e-9
+
+
 def test_eq_pcg_beats_cg_under_diagonal_scaling() -> None:
     """On a diagonally ill-scaled eq problem PCG needs fewer inner iterations."""
     a, b, b_eq, c_eq, x_star, _, _ = make_scaled_eq_problem(80, 1e2, 1e6, 3, seed=7)

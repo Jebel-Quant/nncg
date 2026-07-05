@@ -58,6 +58,31 @@ def test_pcg_inner_solve() -> None:
     assert r_pcg.inner <= 0.7 * r_cg.inner
 
 
+def test_nystrom_inner_recovers_planted_optimum() -> None:
+    """The Nyström-preconditioned inner solver reaches the same optimum as CG."""
+    a, b, x_star, _ = make_problem(80, 1e4, seed=1)
+    op = DenseOperator(a)
+    res = solve_nnqp(op, b, inner="nystrom", nystrom_rank=15)
+    assert res.converged
+    assert np.max(np.abs(res.x - x_star)) < 1e-6
+    assert kkt_violation(op, b, res.x) < 1e-7 * (1.0 + float(np.linalg.norm(b)))
+
+
+def test_nystrom_inner_matches_cg_trajectory() -> None:
+    """Nyström preconditioning changes only inner cost, not the visited free sets."""
+    for seed in range(3):
+        a, b, _, _ = make_problem(60, 1e4, seed=seed)
+        op = DenseOperator(a)
+        assert solve_nnqp(op, b, track=True).traj == solve_nnqp(op, b, inner="nystrom", track=True).traj
+
+
+def test_nystrom_rank_below_one_raises() -> None:
+    """A non-positive Nyström rank is rejected eagerly."""
+    a, b, _, _ = make_problem(40, 1e2, seed=0)
+    with pytest.raises(ValueError, match="nystrom_rank must be"):
+        solve_nnqp(DenseOperator(a), b, inner="nystrom", nystrom_rank=0)
+
+
 def test_max_outer_cap_reports_nonconvergence() -> None:
     """An outer-step cap stops the loop with converged=False."""
     a, b, _, _ = make_problem(60, 1e3, seed=0)
