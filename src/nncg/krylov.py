@@ -26,8 +26,8 @@ MatVec = Callable[[Vector], Vector]
 # scipy returns only a convergence flag (recovering the count needs a callback);
 # (4) scipy's atol/rtol stopping semantics have shifted across releases, so
 # owning the loop pins the exact criterion and keeps the paper's numbers stable.
-# Third-party solvers belong in the baseline comparisons (tests/baselines.py),
-# not in this inner Krylov core.
+# Third-party solvers belong in the baseline comparisons (kept in the paper
+# repo, Jebel-Quant/mean_variance_solvers), not in this inner Krylov core.
 
 
 def cg(
