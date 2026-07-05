@@ -5,10 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com),
 and entries are generated from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.3.1] - 2026-07-05
+
+### Bug Fixes
+- Honor warm start across all inner solvers (#24) (#25)
+
 ## [0.3.0] - 2026-07-05
 
 ### Maintenance
 - Remove baseline comparison suite (maintained in mean_variance_solvers) (#23)
+
+### Other Changes
+- Bump version 0.2.2 → 0.3.0
 
 ## [0.2.2] - 2026-07-04
 
