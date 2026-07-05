@@ -5,10 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com),
 and entries are generated from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.3.2] - 2026-07-05
+
+### Bug Fixes
+- Return exact warm start in zero iterations for CG/PCG (#26)
+
 ## [0.3.1] - 2026-07-05
 
 ### Bug Fixes
 - Honor warm start across all inner solvers (#24) (#25)
+
+### Other Changes
+- Bump version 0.3.0 → 0.3.1
 
 ## [0.3.0] - 2026-07-05
 
