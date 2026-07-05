@@ -30,13 +30,16 @@ import numpy as np
 from cvx.linalg import Matrix, SymmetricOperator, Vector, cholesky_solve
 from numpy.typing import NDArray
 
-from .krylov import MatVec, cg, pcg
+from .krylov import MatVec, Preconditioner, cg, pcg
+from .precond import diagonal, inverse_diagonal, nystrom
 
 SubSolve = Callable[[NDArray[np.int_], "Vector | None"], "tuple[Vector, Vector | None, int]"]
 
 #: The inner solver for each free-block system: ``"cg"`` (matrix-free CG),
-#: ``"pcg"`` (Jacobi-preconditioned CG), or ``"exact"`` (direct ``solve_free``).
-InnerSolver = Literal["cg", "pcg", "exact"]
+#: ``"pcg"`` (Jacobi-preconditioned CG), ``"nystrom"`` (randomized Nyström-
+#: preconditioned CG, with a fresh low-rank sketch built per free set), or
+#: ``"exact"`` (direct ``solve_free``).
+InnerSolver = Literal["cg", "pcg", "nystrom", "exact"]
 """Subproblem solve on a free set: ``(idx, x0) -> (x_F, lam, inner_iters)``."""
 
 ReducedGradient = Callable[["Vector", "Vector | None"], "Vector"]
@@ -118,6 +121,10 @@ def _make_free_solve(
     inner: InnerSolver,
     cg_tol: float,
     cg_maxit: int,
+    nystrom_rank: int = 10,
+    nystrom_oversample: int = 10,
+    nystrom_shift: float | None = None,
+    nystrom_seed: int | None = 0,
 ) -> FreeSolve:
     """Build the per-free-block solver ``A[F, F] y = rhs`` for the chosen backend.
 
@@ -126,14 +133,28 @@ def _make_free_solve(
     right-hand side and once per Schur-complement column. All calls on a given
     free set share the same operator ``A_F``, so the Jacobi preconditioner is
     read off ``op.diag`` lazily and cached across them. The ``x0`` warm start is
-    honoured by both CG and PCG; ``exact`` is a direct solve with nothing to
-    seed and ignores it.
+    honoured by CG, PCG and the Nyström path; ``exact`` is a direct solve with
+    nothing to seed and ignores it.
+
+    The ``"nystrom"`` path rebuilds a randomized low-rank preconditioner for
+    every free set — each ``A_F`` is a different operator, so unlike Jacobi
+    (a cheap ``diag(A)[F]`` slice) it cannot be cached across steps and pays
+    ``nystrom_rank + nystrom_oversample`` matrix-free products per solve on top
+    of the CG iterations. It is worth that cost only when each free block has a
+    steeply decaying spectrum.
 
     Args:
         op: The SPD operator ``A``.
-        inner: Inner solver — ``"cg"``, ``"pcg"``, or ``"exact"``.
+        inner: Inner solver — ``"cg"``, ``"pcg"``, ``"nystrom"``, or ``"exact"``.
         cg_tol: Relative residual tolerance of the CG/PCG solves.
         cg_maxit: Iteration cap per CG/PCG solve.
+        nystrom_rank: Sketch rank of the Nyström preconditioner (clamped to the
+            free-set size). Ignored unless ``inner="nystrom"``.
+        nystrom_oversample: Extra sketch columns for the Nyström build.
+        nystrom_shift: Explicit Nyström tail eigenvalue, or ``None`` for the
+            default (largest uncaptured eigenvalue).
+        nystrom_seed: Seed for the Nyström test matrix; fixed by default so the
+            solve is reproducible.
 
     Returns:
         A callable ``(idx, rhs, x0) -> (y, iters)``; each ``"exact"`` direct
@@ -141,19 +162,27 @@ def _make_free_solve(
 
     Raises:
         ValueError: When ``inner`` is not one of ``"cg"``, ``"pcg"``,
-            ``"exact"`` (raised eagerly), or, on the ``"exact"`` path, when a
-            free block is numerically singular (``op.rcond_free`` below 1e-12).
+            ``"nystrom"``, ``"exact"`` (raised eagerly); when
+            ``inner="nystrom"`` with ``nystrom_rank < 1`` (raised eagerly) or
+            meets a free block whose numerical rank is below ``nystrom_rank``;
+            or, on the ``"exact"`` path, when a free block is numerically
+            singular (``op.rcond_free`` below 1e-12).
         NotImplementedError: When ``inner="pcg"`` meets a backend without
             ``diag`` (propagated from ``cvx.linalg``).
     """
-    if inner not in ("cg", "pcg", "exact"):
-        msg = f"inner must be 'cg', 'pcg', or 'exact'; got {inner!r}"
+    if inner not in ("cg", "pcg", "nystrom", "exact"):
+        msg = f"inner must be 'cg', 'pcg', 'nystrom', or 'exact'; got {inner!r}"
+        raise ValueError(msg)
+    if inner == "nystrom" and nystrom_rank < 1:
+        msg = f"nystrom_rank must be a positive integer; got {nystrom_rank}"
         raise ValueError(msg)
     dinv: Vector | None = None  # Jacobi preconditioner, read off op.diag on first use
     checked: NDArray[np.int_] | None = None  # last free set whose SPD-ness was verified
+    ny_idx: NDArray[np.int_] | None = None  # free set of the cached Nyström preconditioner
+    ny_precond: Preconditioner | None = None  # sketch reused across a free set's p + 1 eq solves
 
     def free_solve(idx: NDArray[np.int_], rhs: Vector, x0: Vector | None) -> tuple[Vector, int]:
-        nonlocal dinv, checked
+        nonlocal dinv, checked, ny_idx, ny_precond
         if inner == "exact":
             # The rcond guard depends only on the free set, not the right-hand
             # side, so verify it once per free set — solve_nnqp_eq drives p + 1
@@ -167,8 +196,26 @@ def _make_free_solve(
             return op.solve_free(idx, rhs), 1
         if inner == "pcg":
             if dinv is None:
-                dinv = 1.0 / op.diag
-            return pcg(_free_matvec(op, idx), rhs, dinv[idx], tol=cg_tol, maxit=cg_maxit, x0=x0)
+                dinv = inverse_diagonal(op)
+            precond = diagonal(dinv[idx])  # Jacobi on the free block: diag(A)[F] sliced
+            return pcg(_free_matvec(op, idx), rhs, precond, tol=cg_tol, maxit=cg_maxit, x0=x0)
+        if inner == "nystrom":
+            mv = _free_matvec(op, idx)
+            if idx.size == 0:  # empty free block: nothing to sketch or precondition
+                return cg(mv, rhs, tol=cg_tol, maxit=cg_maxit, x0=x0)
+            # The sketch depends only on A_F, so build it once per free set and
+            # reuse it across the p + 1 right-hand sides of an equality solve.
+            if ny_precond is None or ny_idx is None or not np.array_equal(ny_idx, idx):
+                ny_precond = nystrom(
+                    mv,
+                    idx.size,
+                    rank=nystrom_rank,
+                    oversample=nystrom_oversample,
+                    shift=nystrom_shift,
+                    seed=nystrom_seed,
+                )
+                ny_idx = idx
+            return pcg(mv, rhs, ny_precond, tol=cg_tol, maxit=cg_maxit, x0=x0)
         return cg(_free_matvec(op, idx), rhs, tol=cg_tol, maxit=cg_maxit, x0=x0)
 
     return free_solve
@@ -343,6 +390,10 @@ def solve_nnqp(
     cg_maxit: int = 100_000,
     max_outer: int | None = None,
     warm: tuple[NDArray[np.bool_], Vector] | None = None,
+    nystrom_rank: int = 10,
+    nystrom_oversample: int = 10,
+    nystrom_shift: float | None = None,
+    nystrom_seed: int | None = 0,
 ) -> Result:
     """Minimise ``1/2 x^T A x - b^T x`` over ``x >= 0`` by the active-set loop.
 
@@ -364,12 +415,16 @@ def solve_nnqp(
         p_max: Patience budget — non-improving batch steps tolerated before a
             fallback pivot. Any value gives finite termination.
         inner: ``"cg"`` (matrix-free), ``"pcg"`` (Jacobi-preconditioned from
-            ``op.diag``), or ``"exact"`` (direct solve of each free block via
+            ``op.diag``), ``"nystrom"`` (randomized Nyström-preconditioned CG,
+            a fresh low-rank sketch per free set — see the ``nystrom_*`` knobs),
+            or ``"exact"`` (direct solve of each free block via
             ``op.solve_free``). Match the inner solver to the backend: pick
             ``"exact"`` when ``solve_free`` is structured and cheap — e.g.
-            ``FactorOperator``'s Woodbury solve at ``O(|F| r^2)`` — and CG
-            when only products are cheap (large dense ``A``, Gram factors
-            with many rows).
+            ``FactorOperator``'s Woodbury solve at ``O(|F| r^2)`` — CG when
+            only products are cheap (large dense ``A``, Gram factors with many
+            rows), and ``"nystrom"`` when those products are cheap but each
+            free block's spectrum decays steeply enough that a low-rank sketch
+            slashes the CG iteration count.
         track: Record the free-set trajectory in ``Result.traj``.
         cg_maxit: Iteration cap per inner solve.
         max_outer: Optional cap on outer steps; when hit, the current iterate
@@ -380,6 +435,15 @@ def solve_nnqp(
             has nothing to seed but still starts from the warm free set) —
             across a support-stable parameter step the loop then terminates in
             a single outer step for every inner solver.
+        nystrom_rank: Sketch rank of the ``inner="nystrom"`` preconditioner,
+            clamped to each free-set size. Ignored by the other inner solvers.
+        nystrom_oversample: Extra sketch columns drawn per Nyström build for
+            accuracy (the standard randomized-SVD oversampling).
+        nystrom_shift: Explicit scalar tail eigenvalue for the Nyström
+            preconditioner, or ``None`` for the default (the largest
+            eigenvalue the sketch does not capture).
+        nystrom_seed: Seed for the Nyström test matrix, fixed by default so the
+            solve stays reproducible; pass ``None`` for a fresh draw.
 
     Returns:
         A :class:`Result`; ``converged`` is True iff the KKT system was
@@ -388,8 +452,10 @@ def solve_nnqp(
     Raises:
         TypeError: When ``a`` is not a :class:`cvx.linalg.SymmetricOperator`.
         ValueError: When the operator dimension does not match ``len(b)``;
-            when ``inner`` is not one of ``"cg"``, ``"pcg"``, ``"exact"``; or
-            when ``inner="exact"`` meets a numerically singular free block
+            when ``inner`` is not one of ``"cg"``, ``"pcg"``, ``"nystrom"``,
+            ``"exact"``; when ``inner="nystrom"`` with ``nystrom_rank < 1`` or a
+            free block whose numerical rank is below ``nystrom_rank``; or when
+            ``inner="exact"`` meets a numerically singular free block
             (``op.rcond_free`` below 1e-12) — ``A`` is then not positive
             definite on that free set; add a ridge.
         NotImplementedError: When ``inner="pcg"`` meets a backend that does
@@ -397,7 +463,9 @@ def solve_nnqp(
     """
     op = _require_operator(a)
     _check_dimension(op, b)
-    free_solve = _make_free_solve(op, inner, cg_tol, cg_maxit)
+    free_solve = _make_free_solve(
+        op, inner, cg_tol, cg_maxit, nystrom_rank, nystrom_oversample, nystrom_shift, nystrom_seed
+    )
 
     def sub_solve(idx: NDArray[np.int_], x0: Vector | None) -> tuple[Vector, Vector | None, int]:
         """Solve the reduced system ``A_F x_F = b_F`` with the chosen inner solver."""
@@ -433,6 +501,10 @@ def solve_nnqp_eq(
     cg_maxit: int = 100_000,
     max_outer: int | None = None,
     warm: tuple[NDArray[np.bool_], Vector] | None = None,
+    nystrom_rank: int = 10,
+    nystrom_oversample: int = 10,
+    nystrom_shift: float | None = None,
+    nystrom_seed: int | None = 0,
 ) -> Result:
     """Solve ``min 1/2 x^T A x - b^T x`` subject to ``x >= 0`` and ``B x = c``.
 
@@ -454,8 +526,11 @@ def solve_nnqp_eq(
         p_max: Patience budget of the batch fast path.
         inner: Inner solver for each free block, applied to all ``p + 1``
             right-hand sides — ``"cg"`` (matrix-free), ``"pcg"`` (Jacobi from
-            ``op.diag``), or ``"exact"`` (direct ``op.solve_free``); the same
-            choice :func:`solve_nnqp` offers.
+            ``op.diag``), ``"nystrom"`` (randomized Nyström-preconditioned CG),
+            or ``"exact"`` (direct ``op.solve_free``); the same choice
+            :func:`solve_nnqp` offers. The ``"nystrom"`` sketch depends only on
+            ``A_F``, so it is built once per free set and reused across all
+            ``p + 1`` right-hand sides.
         track: Record the free-set trajectory in ``Result.traj``.
         cg_maxit: Iteration cap per inner CG/PCG solve.
         max_outer: Optional cap on outer steps; when hit, the current iterate
@@ -470,6 +545,14 @@ def solve_nnqp_eq(
             is direct and has nothing to seed. All three start from the warm
             free set, so across a support-stable parameter step the loop
             terminates in a single outer step for every inner solver.
+        nystrom_rank: Sketch rank of the ``inner="nystrom"`` preconditioner,
+            clamped to each free-set size. Ignored by the other inner solvers.
+        nystrom_oversample: Extra sketch columns drawn per Nyström build.
+        nystrom_shift: Explicit scalar tail eigenvalue for the Nyström
+            preconditioner, or ``None`` for the default (largest uncaptured
+            eigenvalue).
+        nystrom_seed: Seed for the Nyström test matrix, fixed by default so the
+            solve stays reproducible; pass ``None`` for a fresh draw.
 
     Returns:
         A :class:`Result` with the multipliers in ``lam``. The reduced
@@ -478,15 +561,19 @@ def solve_nnqp_eq(
     Raises:
         TypeError: When ``a`` is not a :class:`cvx.linalg.SymmetricOperator`.
         ValueError: When the operator dimension does not match ``len(b)``;
-            when ``inner`` is not one of ``"cg"``, ``"pcg"``, ``"exact"``; or
-            when ``inner="exact"`` meets a numerically singular free block.
+            when ``inner`` is not one of ``"cg"``, ``"pcg"``, ``"nystrom"``,
+            ``"exact"``; when ``inner="nystrom"`` with ``nystrom_rank < 1`` or a
+            free block whose numerical rank is below ``nystrom_rank``; or when
+            ``inner="exact"`` meets a numerically singular free block.
         NotImplementedError: When ``inner="pcg"`` meets a backend that does
             not expose ``diag`` (propagated from ``cvx.linalg``).
     """
     op = _require_operator(a)
     _check_dimension(op, b)
     p = b_eq.shape[0]
-    free_solve = _make_free_solve(op, inner, cg_tol, cg_maxit)
+    free_solve = _make_free_solve(
+        op, inner, cg_tol, cg_maxit, nystrom_rank, nystrom_oversample, nystrom_shift, nystrom_seed
+    )
 
     def sub_solve(idx: NDArray[np.int_], x0: Vector | None) -> tuple[Vector, Vector | None, int]:
         """Solve the saddle system on the free set via the p-by-p Schur complement."""
