@@ -69,6 +69,15 @@ def test_pcg_maxit_returns_iterate() -> None:
     assert it == 2
 
 
+def test_pcg_warm_start_reduces_iterations(spd_system: tuple[np.ndarray, np.ndarray, np.ndarray]) -> None:
+    """A warm start near the solution needs fewer PCG iterations than a cold start."""
+    a, b, x_exact = spd_system
+    dinv = 1.0 / np.diag(a)
+    _, it_cold = pcg(lambda v: a @ v, b, dinv, tol=1e-10)
+    _, it_warm = pcg(lambda v: a @ v, b, dinv, tol=1e-10, x0=x_exact + 1e-6)
+    assert it_warm < it_cold
+
+
 def test_pcg_beats_cg_on_scaled_operator() -> None:
     """Jacobi PCG removes a diagonal scaling that plain CG pays for."""
     a, b, _ = make_scaled_problem(60, 50.0, 1e4, seed=0)
