@@ -126,7 +126,8 @@ def _make_free_solve(
     right-hand side and once per Schur-complement column. All calls on a given
     free set share the same operator ``A_F``, so the Jacobi preconditioner is
     read off ``op.diag`` lazily and cached across them. The ``x0`` warm start is
-    honoured only by plain CG; ``pcg`` and ``exact`` ignore it.
+    honoured by both CG and PCG; ``exact`` is a direct solve with nothing to
+    seed and ignores it.
 
     Args:
         op: The SPD operator ``A``.
@@ -167,7 +168,7 @@ def _make_free_solve(
         if inner == "pcg":
             if dinv is None:
                 dinv = 1.0 / op.diag
-            return pcg(_free_matvec(op, idx), rhs, dinv[idx], tol=cg_tol, maxit=cg_maxit)
+            return pcg(_free_matvec(op, idx), rhs, dinv[idx], tol=cg_tol, maxit=cg_maxit, x0=x0)
         return cg(_free_matvec(op, idx), rhs, tol=cg_tol, maxit=cg_maxit, x0=x0)
 
     return free_solve
@@ -374,9 +375,11 @@ def solve_nnqp(
         max_outer: Optional cap on outer steps; when hit, the current iterate
             is returned with ``converged=False``.
         warm: Optional ``(free_mask, x_prev)`` pair from a previous solve.
-            Starts the loop from that free set and warm-starts every CG call
-            from the newest iterate — across a support-stable parameter step
-            the loop then terminates in a single outer step.
+            Starts the loop from that free set and warm-starts every CG/PCG
+            call from the newest iterate (``inner="exact"`` is direct, so it
+            has nothing to seed but still starts from the warm free set) —
+            across a support-stable parameter step the loop then terminates in
+            a single outer step for every inner solver.
 
     Returns:
         A :class:`Result`; ``converged`` is True iff the KKT system was
@@ -460,10 +463,13 @@ def solve_nnqp_eq(
         warm: Optional ``(free_mask, x_prev)`` pair from a previous solve —
             the same tuple :func:`solve_nnqp` accepts. Starts the loop from
             that free set and seeds the ``v0`` solve of every saddle step
-            from the newest iterate; the ``v1`` columns are re-solved cold.
-            Only ``inner="cg"`` consumes the warm start; ``pcg``/``exact``
-            ignore it. Across a support-stable parameter step the loop then
-            terminates in a single outer step.
+            from the newest iterate; the ``v1`` columns are re-solved cold
+            (their right-hand sides are the rows of ``B_F``, unrelated to
+            ``x_prev``, so it offers no seed for them). Both ``inner="cg"``
+            and ``inner="pcg"`` consume the ``v0`` inner seed; ``inner="exact"``
+            is direct and has nothing to seed. All three start from the warm
+            free set, so across a support-stable parameter step the loop
+            terminates in a single outer step for every inner solver.
 
     Returns:
         A :class:`Result` with the multipliers in ``lam``. The reduced

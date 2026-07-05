@@ -81,6 +81,7 @@ def pcg(
     dinv: Vector,
     tol: float = 1e-8,
     maxit: int = 100_000,
+    x0: Vector | None = None,
 ) -> tuple[Vector, int]:
     """Solve an SPD system by Jacobi-preconditioned conjugate gradients.
 
@@ -94,18 +95,25 @@ def pcg(
         dinv: Elementwise inverse of the operator's diagonal.
         tol: Relative residual stopping tolerance.
         maxit: Iteration cap; the current iterate is returned when it is hit.
+        x0: Optional warm start. The initial residual is ``b - A x0``, so a
+            good guess cuts the iteration count by the log of the initial
+            error.
 
     Returns:
         The approximate solution and the number of iterations taken.
     """
-    x = np.zeros_like(rhs)
-    r = rhs.copy()
+    if x0 is None:
+        x = np.zeros_like(rhs)
+        r = rhs.copy()
+    else:
+        x = x0.astype(np.float64, copy=True)
+        r = rhs - matvec(x)
     z = dinv * r
     p = z.copy()
     rz = float(r @ z)
     bnorm = float(np.linalg.norm(rhs))
     if bnorm == 0.0:
-        return x, 0
+        return np.zeros_like(rhs), 0
     for it in range(1, maxit + 1):
         ap = matvec(p)
         alpha = rz / float(p @ ap)

@@ -80,6 +80,21 @@ def test_warm_start_support_stable_single_step() -> None:
     assert np.max(np.abs(second_warm.x - second_cold.x)) < 1e-6
 
 
+def test_warm_start_pcg_reduces_inner_iterations() -> None:
+    """The PCG inner solver consumes the warm seed: fewer inner iters, one outer step."""
+    a, b, _, _ = make_problem(80, 1e3, seed=0)
+    op = DenseOperator(a)
+    first = solve_nnqp(op, b, inner="pcg")
+    delta = 1e-4 * np.linalg.norm(b) * np.ones_like(b) / np.sqrt(len(b))
+    cold = solve_nnqp(op, b + delta, inner="pcg")
+    assert np.array_equal(cold.free, first.free)  # support-stable step
+    warm = solve_nnqp(op, b + delta, inner="pcg", warm=(first.free, first.x))
+    assert warm.converged
+    assert warm.outer == 1
+    assert warm.inner < cold.inner
+    assert np.max(np.abs(warm.x - cold.x)) < 1e-6
+
+
 def test_warm_start_survives_support_drift() -> None:
     """A warm start from a drifted support still reaches the right optimum."""
     a, b, _, _ = make_problem(80, 1e3, seed=1)
