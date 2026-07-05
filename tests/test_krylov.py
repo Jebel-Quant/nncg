@@ -46,6 +46,18 @@ def test_cg_warm_start_reduces_iterations(spd_system: tuple[np.ndarray, np.ndarr
     assert it_warm < it_cold
 
 
+def test_cg_exact_warm_start(spd_system: tuple[np.ndarray, np.ndarray, np.ndarray]) -> None:
+    """A warm start that already solves the system returns it in zero iterations.
+
+    The initial residual is then zero, so guarding this case avoids a 0/0 in
+    the alpha step.
+    """
+    a, b, x_exact = spd_system
+    x, it = cg(lambda v: a @ v, b, x0=x_exact)
+    assert it == 0
+    assert np.allclose(x, x_exact)
+
+
 def test_pcg_solves_spd(spd_system: tuple[np.ndarray, np.ndarray, np.ndarray]) -> None:
     """Jacobi PCG reaches the exact solution of an SPD system."""
     a, b, x_exact = spd_system
@@ -76,6 +88,14 @@ def test_pcg_warm_start_reduces_iterations(spd_system: tuple[np.ndarray, np.ndar
     _, it_cold = pcg(lambda v: a @ v, b, dinv, tol=1e-10)
     _, it_warm = pcg(lambda v: a @ v, b, dinv, tol=1e-10, x0=x_exact + 1e-6)
     assert it_warm < it_cold
+
+
+def test_pcg_exact_warm_start(spd_system: tuple[np.ndarray, np.ndarray, np.ndarray]) -> None:
+    """A warm start that already solves the system returns it in zero iterations."""
+    a, b, x_exact = spd_system
+    x, it = pcg(lambda v: a @ v, b, 1.0 / np.diag(a), x0=x_exact)
+    assert it == 0
+    assert np.allclose(x, x_exact)
 
 
 def test_pcg_beats_cg_on_scaled_operator() -> None:

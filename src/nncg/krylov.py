@@ -62,6 +62,11 @@ def cg(
     bnorm = float(np.linalg.norm(rhs))
     if bnorm == 0.0:
         return np.zeros_like(rhs), 0
+    # A warm start that already solves the system to tolerance leaves r == 0,
+    # so p == 0 and the search-direction curvature p @ ap vanishes; returning
+    # here avoids the 0/0 in the alpha step and reports zero iterations.
+    if np.sqrt(rs) / bnorm <= tol:
+        return x, 0
     for it in range(1, maxit + 1):
         ap = matvec(p)
         alpha = rs / float(p @ ap)
@@ -114,6 +119,11 @@ def pcg(
     bnorm = float(np.linalg.norm(rhs))
     if bnorm == 0.0:
         return np.zeros_like(rhs), 0
+    # A warm start that already solves the system to tolerance leaves r == 0,
+    # so p == 0 and the search-direction curvature p @ ap vanishes; returning
+    # here avoids the 0/0 in the alpha step and reports zero iterations.
+    if float(np.linalg.norm(r)) / bnorm <= tol:
+        return x, 0
     for it in range(1, maxit + 1):
         ap = matvec(p)
         alpha = rz / float(p @ ap)
