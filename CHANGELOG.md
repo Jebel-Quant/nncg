@@ -5,10 +5,21 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com),
 and entries are generated from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.4.0] - 2026-07-06
+
+### New Features
+- Add precond.py with Jacobi and randomized Nyström preconditioners (#27)
+
+### Maintenance
+- Layer the API as ActiveSetSolver + pluggable InnerSolver (#29)
+
 ## [0.3.2] - 2026-07-05
 
 ### Bug Fixes
 - Return exact warm start in zero iterations for CG/PCG (#26)
+
+### Other Changes
+- Bump version 0.3.1 → 0.3.2
 
 ## [0.3.1] - 2026-07-05
 
