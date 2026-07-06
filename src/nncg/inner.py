@@ -223,14 +223,29 @@ class Exact:
 
     Suits backends whose ``solve_free`` is structured and cheap (e.g.
     ``FactorOperator``'s Woodbury solve at ``O(|F| r^2)``). It ignores warm starts.
+
+    The ``rcond_free`` conditioning guard depends only on the free block, not the
+    right-hand side, so it is estimated at most once per free set:
+    :meth:`nncg.solver.ActiveSetSolver.solve_eq` drives ``p + 1`` solves through
+    the *same* free set per outer step, and the (up to ``O(|F|^3)``) estimate must
+    not be paid ``p + 1`` times over. The last verified ``(operator, idx)`` is
+    memoised in a private single slot — keyed on operator identity so the memo can
+    never carry a stale verdict across operators, and excluded from equality/repr
+    so ``Exact`` stays a value.
     """
 
+    _checked_op: SymmetricOperator | None = field(default=None, compare=False, repr=False)
+    _checked_idx: NDArray[np.int_] | None = field(default=None, compare=False, repr=False)
+
     def solve(self, op: SymmetricOperator, idx: NDArray[np.int_], rhs: Vector, x0: Vector | None) -> tuple[Vector, int]:  # noqa: ARG002
-        """Solve the free block ``A[F, F] y = rhs`` directly, guarding its conditioning."""
-        rcond = op.rcond_free(idx)
-        if rcond < _RCOND_MIN:
-            msg = f"free block of size {idx.size} is numerically singular (rcond={rcond:.2e})"
-            raise ValueError(msg)
+        """Solve the free block ``A[F, F] y = rhs`` directly, guarding its conditioning once per free set."""
+        if self._checked_op is not op or self._checked_idx is None or not np.array_equal(self._checked_idx, idx):
+            rcond = op.rcond_free(idx)
+            if rcond < _RCOND_MIN:
+                msg = f"free block of size {idx.size} is numerically singular (rcond={rcond:.2e})"
+                raise ValueError(msg)
+            object.__setattr__(self, "_checked_op", op)
+            object.__setattr__(self, "_checked_idx", idx)
         return op.solve_free(idx, rhs), 1
 
 

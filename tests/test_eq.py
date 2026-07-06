@@ -118,6 +118,44 @@ def test_eq_exact_inner_matches_cg() -> None:
     assert np.linalg.norm(b_eq @ r_ex.x - c_eq) < 1e-9
 
 
+def test_eq_exact_guards_conditioning_once_per_free_set() -> None:
+    """The exact eq path estimates ``rcond_free`` once per free set, not ``p + 1`` times.
+
+    ``solve_eq`` drives the ``v0`` right-hand side plus one Schur-complement
+    column per equality through the *same* free block each outer step. The
+    conditioning guard depends only on the free set, so it must be paid once per
+    free set (regression of #30 / #18); the ``p + 1`` ``solve_free`` calls prove
+    the guard was genuinely shared, not that the column loop was skipped.
+    """
+    p = 8
+    a, b, b_eq, c_eq, _, _, _ = make_eq_problem(80, 1e4, p, seed=4)
+
+    class _CountingOperator(DenseOperator):  # type: ignore[misc]
+        """Dense operator that tallies its ``rcond_free`` and ``solve_free`` calls."""
+
+        def __init__(self, arr: np.ndarray) -> None:
+            super().__init__(arr)
+            self.rcond_calls = 0
+            self.solve_calls = 0
+
+        def rcond_free(self, free: object) -> float:
+            """Count and delegate the conditioning estimate."""
+            self.rcond_calls += 1
+            return float(super().rcond_free(free))
+
+        def solve_free(self, free: object, rhs: np.ndarray) -> np.ndarray:
+            """Count and delegate the direct free-block solve."""
+            self.solve_calls += 1
+            return np.asarray(super().solve_free(free, rhs))
+
+    op = _CountingOperator(a)
+    res = ActiveSetSolver(inner=Exact()).solve_eq(op, b, b_eq, c_eq)
+    assert res.converged
+    assert op.solve_calls == res.outer * (p + 1)  # every column is still solved
+    assert op.rcond_calls <= res.outer  # but the guard is shared across them
+    assert op.rcond_calls < op.solve_calls  # the #30 waste (one guard per solve) is gone
+
+
 def test_eq_pcg_inner_recovers_optimum() -> None:
     """The Jacobi-preconditioned eq solve recovers the same planted optimum."""
     a, b, b_eq, c_eq, x_star, _, _ = make_eq_problem(80, 1e4, 3, seed=6)
