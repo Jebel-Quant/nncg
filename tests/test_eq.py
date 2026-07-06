@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from cvx.linalg import DenseOperator
 
-from nncg import solve_nnqp_eq
+from nncg import CG, ActiveSetConfig, ActiveSetSolver, Exact, InnerSolver, Jacobi, Nystrom, NystromConfig
 from tests.problems import make_eq_problem, make_scaled_eq_problem
 
 
@@ -13,7 +13,7 @@ from tests.problems import make_eq_problem, make_scaled_eq_problem
 def test_recovers_planted_eq_optimum(p: int, kappa: float) -> None:
     """The Schur-complement loop recovers the planted optimum for general B."""
     a, b, b_eq, c_eq, x_star, _, _ = make_eq_problem(80, kappa, p, seed=p)
-    res = solve_nnqp_eq(DenseOperator(a), b, b_eq, c_eq)
+    res = ActiveSetSolver(inner=CG()).solve_eq(DenseOperator(a), b, b_eq, c_eq)
     assert res.converged
     assert np.max(np.abs(res.x - x_star)) < 1e-6
     assert np.linalg.norm(b_eq @ res.x - c_eq) < 1e-9  # feasible to machine precision
@@ -33,7 +33,7 @@ def test_p_one_is_the_single_normalisation() -> None:
     a, b, x_star, _ = make_problem(60, 1e3, seed=0)
     ones = np.ones((1, 60))
     beta = np.array([float(x_star.sum())])
-    res = solve_nnqp_eq(DenseOperator(a), b, ones, beta)
+    res = ActiveSetSolver(inner=CG()).solve_eq(DenseOperator(a), b, ones, beta)
     assert res.converged
     assert np.max(np.abs(res.x - x_star)) < 1e-6
     assert res.lam is not None
@@ -41,8 +41,8 @@ def test_p_one_is_the_single_normalisation() -> None:
     assert abs(float(res.x.sum()) - float(beta[0])) < 1e-9
 
 
-@pytest.mark.parametrize("inner", ["cg", "pcg"])
-def test_eq_warm_start_support_stable_single_step(inner: str) -> None:
+@pytest.mark.parametrize("inner", [CG(), Jacobi()])
+def test_eq_warm_start_support_stable_single_step(inner: InnerSolver) -> None:
     """Across a support-stable step the warm eq loop takes one outer step and cuts inner iters.
 
     Both iterative inners consume the ``v0`` warm seed: the warm solve makes
@@ -52,11 +52,12 @@ def test_eq_warm_start_support_stable_single_step(inner: str) -> None:
     """
     a, b, b_eq, c_eq, _, _, _ = make_eq_problem(80, 1e3, 3, seed=2)
     op = DenseOperator(a)
-    first = solve_nnqp_eq(op, b, b_eq, c_eq, inner=inner)
+    solver = ActiveSetSolver(inner=inner)
+    first = solver.solve_eq(op, b, b_eq, c_eq)
     delta = 1e-4 * np.linalg.norm(b) * np.ones_like(b) / np.sqrt(len(b))
-    second_cold = solve_nnqp_eq(op, b + delta, b_eq, c_eq, inner=inner)
+    second_cold = solver.solve_eq(op, b + delta, b_eq, c_eq)
     assert np.array_equal(second_cold.free, first.free)  # support-stable step
-    second_warm = solve_nnqp_eq(op, b + delta, b_eq, c_eq, inner=inner, warm=(first.free, first.x))
+    second_warm = solver.solve_eq(op, b + delta, b_eq, c_eq, warm=(first.free, first.x))
     assert second_warm.converged
     assert second_warm.outer == 1
     assert second_warm.inner < second_cold.inner
@@ -65,7 +66,7 @@ def test_eq_warm_start_support_stable_single_step(inner: str) -> None:
 
 
 def test_eq_warm_start_exact_single_outer_step() -> None:
-    """``inner="exact"`` has no inner seed, but the warm free set still gives one outer step.
+    """``Exact`` has no inner seed, but the warm free set still gives one outer step.
 
     The direct solve has nothing to warm-start, so the reduction is purely the
     outer loop's: starting from the previous (already optimal) free set, the
@@ -74,12 +75,13 @@ def test_eq_warm_start_exact_single_outer_step() -> None:
     """
     a, b, b_eq, c_eq, _, _, _ = make_eq_problem(80, 1e3, 3, seed=2)
     op = DenseOperator(a)
-    first = solve_nnqp_eq(op, b, b_eq, c_eq, inner="exact")
+    solver = ActiveSetSolver(inner=Exact())
+    first = solver.solve_eq(op, b, b_eq, c_eq)
     delta = 1e-4 * np.linalg.norm(b) * np.ones_like(b) / np.sqrt(len(b))
-    cold = solve_nnqp_eq(op, b + delta, b_eq, c_eq, inner="exact")
+    cold = solver.solve_eq(op, b + delta, b_eq, c_eq)
     assert np.array_equal(cold.free, first.free)  # support-stable step
     assert cold.outer > 1  # cold starts from the full free set and must shrink
-    warm = solve_nnqp_eq(op, b + delta, b_eq, c_eq, inner="exact", warm=(first.free, first.x))
+    warm = solver.solve_eq(op, b + delta, b_eq, c_eq, warm=(first.free, first.x))
     assert warm.converged
     assert warm.outer == 1
     assert np.max(np.abs(warm.x - cold.x)) < 1e-6
@@ -90,17 +92,17 @@ def test_eq_warm_start_survives_support_drift() -> None:
     """A warm start from a drifted support still reaches the right eq optimum."""
     a, b, b_eq, c_eq, _, _, _ = make_eq_problem(80, 1e3, 3, seed=3)
     op = DenseOperator(a)
-    first = solve_nnqp_eq(op, b, b_eq, c_eq)
+    first = ActiveSetSolver(inner=CG()).solve_eq(op, b, b_eq, c_eq)
     b2 = b + 0.3 * np.linalg.norm(b) * np.random.default_rng(0).standard_normal(len(b)) / np.sqrt(len(b))
-    cold = solve_nnqp_eq(op, b2, b_eq, c_eq)
-    warm = solve_nnqp_eq(op, b2, b_eq, c_eq, warm=(first.free, first.x))
+    cold = ActiveSetSolver(inner=CG()).solve_eq(op, b2, b_eq, c_eq)
+    warm = ActiveSetSolver(inner=CG()).solve_eq(op, b2, b_eq, c_eq, warm=(first.free, first.x))
     assert warm.converged
     assert np.max(np.abs(warm.x - cold.x)) < 1e-6
     assert np.linalg.norm(b_eq @ warm.x - c_eq) < 1e-9
 
 
 def test_eq_exact_inner_matches_cg() -> None:
-    """The direct (``inner="exact"``) eq solve matches the CG solve.
+    """The direct (:class:`Exact`) eq solve matches the CG solve.
 
     Both recover the planted optimum and settle on the same free set — the
     equality analogue of the inexactness lemma: the inner accuracy does not
@@ -108,8 +110,8 @@ def test_eq_exact_inner_matches_cg() -> None:
     """
     a, b, b_eq, c_eq, x_star, _, _ = make_eq_problem(80, 1e4, 3, seed=5)
     op = DenseOperator(a)
-    r_cg = solve_nnqp_eq(op, b, b_eq, c_eq)
-    r_ex = solve_nnqp_eq(op, b, b_eq, c_eq, inner="exact")
+    r_cg = ActiveSetSolver(inner=CG()).solve_eq(op, b, b_eq, c_eq)
+    r_ex = ActiveSetSolver(inner=Exact()).solve_eq(op, b, b_eq, c_eq)
     assert r_ex.converged
     assert np.array_equal(r_ex.free, r_cg.free)
     assert np.max(np.abs(r_ex.x - x_star)) < 1e-6
@@ -119,7 +121,7 @@ def test_eq_exact_inner_matches_cg() -> None:
 def test_eq_pcg_inner_recovers_optimum() -> None:
     """The Jacobi-preconditioned eq solve recovers the same planted optimum."""
     a, b, b_eq, c_eq, x_star, _, _ = make_eq_problem(80, 1e4, 3, seed=6)
-    r_pcg = solve_nnqp_eq(DenseOperator(a), b, b_eq, c_eq, inner="pcg")
+    r_pcg = ActiveSetSolver(inner=Jacobi()).solve_eq(DenseOperator(a), b, b_eq, c_eq)
     assert r_pcg.converged
     assert np.max(np.abs(r_pcg.x - x_star)) < 1e-6
     assert np.linalg.norm(b_eq @ r_pcg.x - c_eq) < 1e-9
@@ -128,11 +130,12 @@ def test_eq_pcg_inner_recovers_optimum() -> None:
 def test_eq_nystrom_inner_recovers_optimum() -> None:
     """The Nyström-preconditioned eq solve recovers the same planted optimum.
 
-    Exercises the per-free-set sketch cache: each saddle step drives ``p + 1``
-    right-hand sides through the same ``A_F``, and the sketch is built once.
+    Each saddle step sketches ``A_F`` afresh for each of its ``p + 1`` right-hand
+    sides (the sketch seed is fixed, so the preconditioner is identical each time).
     """
     a, b, b_eq, c_eq, x_star, _, _ = make_eq_problem(80, 1e4, 3, seed=6)
-    r_ny = solve_nnqp_eq(DenseOperator(a), b, b_eq, c_eq, inner="nystrom", nystrom_rank=15)
+    inner = Nystrom(nystrom=NystromConfig(rank=15))
+    r_ny = ActiveSetSolver(inner=inner).solve_eq(DenseOperator(a), b, b_eq, c_eq)
     assert r_ny.converged
     assert np.max(np.abs(r_ny.x - x_star)) < 1e-6
     assert np.linalg.norm(b_eq @ r_ny.x - c_eq) < 1e-9
@@ -142,8 +145,8 @@ def test_eq_pcg_beats_cg_under_diagonal_scaling() -> None:
     """On a diagonally ill-scaled eq problem PCG needs fewer inner iterations."""
     a, b, b_eq, c_eq, x_star, _, _ = make_scaled_eq_problem(80, 1e2, 1e6, 3, seed=7)
     op = DenseOperator(a)
-    r_cg = solve_nnqp_eq(op, b, b_eq, c_eq, inner="cg")
-    r_pcg = solve_nnqp_eq(op, b, b_eq, c_eq, inner="pcg")
+    r_cg = ActiveSetSolver(inner=CG()).solve_eq(op, b, b_eq, c_eq)
+    r_pcg = ActiveSetSolver(inner=Jacobi()).solve_eq(op, b, b_eq, c_eq)
     assert r_pcg.converged
     assert np.max(np.abs(r_pcg.x - x_star)) < 1e-6
     assert np.max(np.abs(r_cg.x - x_star)) < 1e-6
@@ -155,7 +158,7 @@ def test_eq_pcg_beats_cg_under_diagonal_scaling() -> None:
 def test_eq_track_records_trajectory() -> None:
     """``track=True`` records the visited free sets, ending on the converged one."""
     a, b, b_eq, c_eq, _, _, _ = make_eq_problem(60, 1e3, 3, seed=8)
-    res = solve_nnqp_eq(DenseOperator(a), b, b_eq, c_eq, track=True)
+    res = ActiveSetSolver(inner=CG(), config=ActiveSetConfig(track=True)).solve_eq(DenseOperator(a), b, b_eq, c_eq)
     assert res.converged
     assert res.traj is not None
     assert len(res.traj) == res.outer  # one recorded free set per outer step
@@ -165,16 +168,9 @@ def test_eq_track_records_trajectory() -> None:
 def test_eq_max_outer_caps_the_loop() -> None:
     """``max_outer`` stops the loop early and reports non-convergence."""
     a, b, b_eq, c_eq, _, _, _ = make_eq_problem(80, 1e5, 3, seed=9)
-    res = solve_nnqp_eq(DenseOperator(a), b, b_eq, c_eq, max_outer=1)
+    res = ActiveSetSolver(inner=CG(), config=ActiveSetConfig(max_outer=1)).solve_eq(DenseOperator(a), b, b_eq, c_eq)
     assert not res.converged
     assert res.outer == 1
-
-
-def test_eq_rejects_unknown_inner() -> None:
-    """An unrecognised inner solver is rejected up front, not run as CG."""
-    a, b, b_eq, c_eq, _, _, _ = make_eq_problem(20, 1e2, 1, seed=0)
-    with pytest.raises(ValueError, match="inner must be"):
-        solve_nnqp_eq(DenseOperator(a), b, b_eq, c_eq, inner="nope")  # type: ignore[arg-type]
 
 
 def test_eq_reduced_gradient_certifies() -> None:
@@ -185,7 +181,7 @@ def test_eq_reduced_gradient_certifies() -> None:
     CG residual, which varies with the NumPy/BLAS version.
     """
     a, b, b_eq, c_eq, _, _, _ = make_eq_problem(60, 1e3, 3, seed=1)
-    res = solve_nnqp_eq(DenseOperator(a), b, b_eq, c_eq)
+    res = ActiveSetSolver(inner=CG()).solve_eq(DenseOperator(a), b, b_eq, c_eq)
     assert res.lam is not None
     s = a @ res.x - b - b_eq.T @ res.lam
     assert float(np.min(res.x)) > -1e-6

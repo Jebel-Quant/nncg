@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 from cvx.linalg import DenseOperator, GramOperator, SymmetricOperator
 
-from nncg import kkt_violation, solve_nnqp, solve_nnqp_eq
+from nncg import CG, ActiveSetSolver, Exact, Jacobi, kkt_violation
 from tests.problems import make_problem
 
 
@@ -67,7 +67,7 @@ def test_gram_operator_recovers_planted_optimum() -> None:
     """
     m, b, x_star = _plant_gram_problem(30, 60, ridge=1.0, seed=0)
     op = GramOperator(m, ridge=1.0)
-    res = solve_nnqp(op, b)
+    res = ActiveSetSolver(inner=CG()).solve(op, b)
     assert res.converged
     assert np.max(np.abs(res.x - x_star)) < 1e-6
     assert kkt_violation(op, b, res.x) < 1e-6
@@ -76,12 +76,12 @@ def test_gram_operator_recovers_planted_optimum() -> None:
 def test_exact_inner_uses_operator_solve_free() -> None:
     """``inner="exact"`` routes through ``op.solve_free`` for both backends."""
     a, b, x_star, _ = make_problem(60, 1e2, seed=1)
-    res = solve_nnqp(DenseOperator(a), b, inner="exact")
+    res = ActiveSetSolver(inner=Exact()).solve(DenseOperator(a), b)
     assert res.converged
     assert np.max(np.abs(res.x - x_star)) < 1e-6
 
     m, b_g, x_star_g = _plant_gram_problem(30, 60, ridge=1.0, seed=2)
-    res_g = solve_nnqp(GramOperator(m, ridge=1.0), b_g, inner="exact")
+    res_g = ActiveSetSolver(inner=Exact()).solve(GramOperator(m, ridge=1.0), b_g)
     assert res_g.converged
     assert np.max(np.abs(res_g.x - x_star_g)) < 1e-6
 
@@ -89,7 +89,7 @@ def test_exact_inner_uses_operator_solve_free() -> None:
 def test_pcg_preconditions_from_operator_diag() -> None:
     """Jacobi PCG reads its preconditioner off ``op.diag`` — no matrix needed."""
     m, b, x_star = _plant_gram_problem(30, 60, ridge=1.0, seed=3)
-    res = solve_nnqp(GramOperator(m, ridge=1.0), b, inner="pcg")
+    res = ActiveSetSolver(inner=Jacobi()).solve(GramOperator(m, ridge=1.0), b)
     assert res.converged
     assert np.max(np.abs(res.x - x_star)) < 1e-6
 
@@ -98,7 +98,7 @@ def test_pcg_without_diag_raises() -> None:
     """A backend without a cheap diagonal refuses Jacobi PCG."""
     a, b, _, _ = make_problem(30, 1e2, seed=0)
     with pytest.raises(NotImplementedError, match="diagonal"):
-        solve_nnqp(_NoDiagOperator(a), b, inner="pcg")
+        ActiveSetSolver(inner=Jacobi()).solve(_NoDiagOperator(a), b)
 
 
 def test_exact_inner_guards_singular_free_block() -> None:
@@ -112,7 +112,7 @@ def test_exact_inner_guards_singular_free_block() -> None:
     m = rng.standard_normal((10, 30))  # rank 10 < n = 30
     b = m.T @ rng.standard_normal(10)
     with pytest.raises(ValueError, match="singular"):
-        solve_nnqp(GramOperator(m, ridge=0.0), b, inner="exact")
+        ActiveSetSolver(inner=Exact()).solve(GramOperator(m, ridge=0.0), b)
 
 
 def test_dimension_mismatch_is_rejected() -> None:
@@ -121,9 +121,9 @@ def test_dimension_mismatch_is_rejected() -> None:
     op = DenseOperator(a)
     b_short = b[:-1]
     with pytest.raises(ValueError, match="dimension"):
-        solve_nnqp(op, b_short)
+        ActiveSetSolver(inner=CG()).solve(op, b_short)
     with pytest.raises(ValueError, match="dimension"):
-        solve_nnqp_eq(op, b_short, np.ones((1, 19)), np.array([1.0]))
+        ActiveSetSolver(inner=CG()).solve_eq(op, b_short, np.ones((1, 19)), np.array([1.0]))
     with pytest.raises(ValueError, match="dimension"):
         kkt_violation(op, b_short, np.zeros(19))
 
@@ -132,9 +132,9 @@ def test_dense_arrays_are_rejected() -> None:
     """A dense array is refused with a pointer to DenseOperator."""
     a, b, _, _ = make_problem(20, 1e2, seed=0)
     with pytest.raises(TypeError, match="DenseOperator"):
-        solve_nnqp(a, b)
+        ActiveSetSolver(inner=CG()).solve(a, b)
     with pytest.raises(TypeError, match="DenseOperator"):
-        solve_nnqp_eq(a, b, np.ones((1, 20)), np.array([1.0]))
+        ActiveSetSolver(inner=CG()).solve_eq(a, b, np.ones((1, 20)), np.array([1.0]))
     with pytest.raises(TypeError, match="DenseOperator"):
         kkt_violation(a, b, np.zeros(20))
 
@@ -144,7 +144,7 @@ def test_eq_solver_accepts_gram_operator() -> None:
     m, b, x_star = _plant_gram_problem(30, 60, ridge=1.0, seed=4)
     ones = np.ones((1, 60))
     beta = np.array([float(x_star.sum())])
-    res = solve_nnqp_eq(GramOperator(m, ridge=1.0), b, ones, beta)
+    res = ActiveSetSolver(inner=CG()).solve_eq(GramOperator(m, ridge=1.0), b, ones, beta)
     assert res.converged
     assert res.lam is not None
     assert abs(float(res.x.sum()) - float(beta[0])) < 1e-8

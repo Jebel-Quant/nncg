@@ -5,220 +5,88 @@ Solves the strictly convex non-negative quadratic program
     min_{x >= 0}  1/2 x^T A x - b^T x,        A symmetric positive definite,
 
 and its equality-augmented variant with a general linear system ``B x = c``,
-by wrapping a matrix-free conjugate-gradient inner solver in a primal-dual
-active-set outer loop. The working-set toggles are the principal pivots of the
-linear complementarity problem LCP(A, -b); guarding the fast block-pivot path
-with a least-index Bland fallback gives unconditional finite termination at
-the unique global minimiser — no non-degeneracy assumption (Theorem 5.1 of the
-accompanying paper). See https://github.com/Jebel-Quant/mean_variance_solvers.
+by wrapping a matrix-free inner solver in a primal-dual active-set outer loop.
+The working-set toggles are the principal pivots of the linear complementarity
+problem LCP(A, -b); guarding the fast block-pivot path with a least-index Bland
+fallback gives unconditional finite termination at the unique global minimiser
+— no non-degeneracy assumption (Theorem 5.1 of the accompanying paper). See
+https://github.com/Jebel-Quant/mean_variance_solvers.
 
-The quadratic term enters as a :class:`cvx.linalg.SymmetricOperator`, accessed
-only through block products: ``apply_free`` drives the CG inner solves,
-``matvec`` the reduced gradient, and ``solve_free`` the optional direct inner
-solver. Wrap an explicit SPD array in ``DenseOperator``; for the Gram case
-``A = M^T M + ridge I`` pass ``GramOperator(M, ridge)`` and the ``n x n``
-matrix is never formed.
+:class:`ActiveSetSolver` is the outer loop and the entry point. It knows nothing
+about preconditioning: it asks its :class:`nncg.inner.InnerSolver` for a
+per-free-block solve and drives the pivots around it. The quadratic term enters
+as a :class:`cvx.linalg.SymmetricOperator`, accessed only through block products
+— wrap an explicit SPD array in ``DenseOperator``, or pass ``GramOperator(M,
+ridge)`` for ``A = M^T M + ridge I`` so the ``n x n`` matrix is never formed.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import Literal, cast
+from dataclasses import dataclass, field
+from typing import Protocol
 
 import numpy as np
 from cvx.linalg import Matrix, SymmetricOperator, Vector, cholesky_solve
 from numpy.typing import NDArray
 
-from .krylov import MatVec, Preconditioner, cg, pcg
-from .precond import diagonal, inverse_diagonal, nystrom
-
 SubSolve = Callable[[NDArray[np.int_], "Vector | None"], "tuple[Vector, Vector | None, int]"]
-
-#: The inner solver for each free-block system: ``"cg"`` (matrix-free CG),
-#: ``"pcg"`` (Jacobi-preconditioned CG), ``"nystrom"`` (randomized Nyström-
-#: preconditioned CG, with a fresh low-rank sketch built per free set), or
-#: ``"exact"`` (direct ``solve_free``).
-InnerSolver = Literal["cg", "pcg", "nystrom", "exact"]
 """Subproblem solve on a free set: ``(idx, x0) -> (x_F, lam, inner_iters)``."""
 
 ReducedGradient = Callable[["Vector", "Vector | None"], "Vector"]
 """Reduced gradient of the subproblem: ``(x, lam) -> s``."""
 
+
+class InnerSolver(Protocol):
+    """The inner-solver interface the active-set loop depends on (dependency inversion).
+
+    Structural (a :class:`typing.Protocol`): anything with a matching
+    :meth:`solve` is an inner solver, so implementations need neither import
+    nor subclass this — this module (the high-level loop) owns the interface, and
+    the implementations depend on it, not the other way round. The built-ins live
+    in :mod:`nncg.inner` (:class:`~nncg.inner.CG`, :class:`~nncg.inner.Jacobi`,
+    :class:`~nncg.inner.Nystrom`, :class:`~nncg.inner.Exact`); further ones —
+    Clarabel- or KKT-equation-based — live in Jebel-Quant/mean_variance_solvers.
+    """
+
+    def solve(self, op: SymmetricOperator, idx: NDArray[np.int_], rhs: Vector, x0: Vector | None) -> tuple[Vector, int]:
+        """Solve the free-block system ``A[F, F] y = rhs``, warm-started at ``x0``.
+
+        Returns the free-block solution and the inner iteration count (each
+        direct solve counts as one). Called once per outer step by the
+        bound-constrained loop, and once per ``p + 1`` right-hand side per outer
+        step by the equality-augmented loop.
+        """
+        ...
+
+
+@dataclass(frozen=True)
+class ActiveSetConfig:
+    """Configuration of the active-set outer loop (:class:`ActiveSetSolver`).
+
+    Bundles the outer-loop knobs into one argument; the inner solver and its
+    tolerances live in :class:`nncg.inner.InnerSolver`, and the warm start stays
+    a separate argument.
+
+    Attributes:
+        tol: Threshold of the primal and dual KKT violator tests.
+        p_max: Patience budget — non-improving batch steps tolerated before a
+            least-index Bland fallback pivot. Any value gives finite termination.
+        track: Record the visited free-set trajectory in ``Result.traj``.
+        max_outer: Optional cap on outer steps; when hit, the current iterate is
+            returned with ``converged=False``.
+    """
+
+    tol: float = 1e-8
+    p_max: int = 3
+    track: bool = False
+    max_outer: int | None = None
+
+
 _NEEDS_OPERATOR = (
     "the quadratic term must be a cvx.linalg.SymmetricOperator: wrap a dense SPD "
     "array in DenseOperator(a), or pass GramOperator(M, ridge) for A = M'M + ridge*I"
 )
-_RCOND_MIN = 1e-12  # matches cvx-linalg's DEFAULT_COND_THRESHOLD of 1e12
-
-
-def _check_dimension(op: SymmetricOperator, b: Vector) -> None:
-    """Check that the operator and the linear term agree in dimension.
-
-    Args:
-        op: The symmetric operator ``A``.
-        b: The linear term ``b``.
-
-    Raises:
-        ValueError: When ``op.n != len(b)``.
-    """
-    if op.n != len(b):
-        msg = f"operator dimension {op.n} does not match len(b) = {len(b)}"
-        raise ValueError(msg)
-
-
-def _require_operator(a: object) -> SymmetricOperator:
-    """Validate that the quadratic term is a symmetric operator.
-
-    Args:
-        a: The candidate quadratic term.
-
-    Returns:
-        *a* unchanged when it is a :class:`cvx.linalg.SymmetricOperator`.
-
-    Raises:
-        TypeError: When *a* is anything else (e.g. a dense array).
-    """
-    if not isinstance(a, SymmetricOperator):
-        raise TypeError(_NEEDS_OPERATOR)
-    return a
-
-
-def _free_matvec(op: SymmetricOperator, idx: NDArray[np.int_]) -> MatVec:
-    """Return the free-block action ``v -> A[F, F] v`` of the operator.
-
-    The free-set restriction is hoisted out of the inner loop: when the
-    operator provides ``restricted`` (cvx-linalg >= 0.10), the pre-sliced
-    free-block operator is built once here and the returned callable is its
-    plain ``matvec``. Calling ``apply_free(idx, v)`` per CG iteration instead
-    re-gathers the operator's storage (e.g. the Gram factor columns) on every
-    call, which costs an order of magnitude more wall clock at identical
-    iteration counts. The fallback keeps older cvx-linalg releases working.
-
-    Args:
-        op: The symmetric operator ``A``.
-        idx: Integer positions of the free set ``F``.
-
-    Returns:
-        A callable computing ``A[F, F] @ v``; the reduced matrix is never
-        materialised.
-    """
-    restricted = getattr(op, "restricted", None)
-    if restricted is not None:
-        try:
-            return cast(MatVec, restricted(idx).matvec)
-        except NotImplementedError:
-            pass  # backend without a pre-sliced form; fall back below
-    return lambda v: op.apply_free(idx, v)
-
-
-#: A single free-block solve ``(idx, rhs, x0) -> (y, iters)`` for ``A[F, F] y = rhs``.
-FreeSolve = Callable[[NDArray[np.int_], Vector, "Vector | None"], "tuple[Vector, int]"]
-
-
-def _make_free_solve(
-    op: SymmetricOperator,
-    inner: InnerSolver,
-    cg_tol: float,
-    cg_maxit: int,
-    nystrom_rank: int = 10,
-    nystrom_oversample: int = 10,
-    nystrom_shift: float | None = None,
-    nystrom_seed: int | None = 0,
-) -> FreeSolve:
-    """Build the per-free-block solver ``A[F, F] y = rhs`` for the chosen backend.
-
-    The returned callable is shared by both entry points: :func:`solve_nnqp`
-    calls it once per outer step, :func:`solve_nnqp_eq` once for the ``v0``
-    right-hand side and once per Schur-complement column. All calls on a given
-    free set share the same operator ``A_F``, so the Jacobi preconditioner is
-    read off ``op.diag`` lazily and cached across them. The ``x0`` warm start is
-    honoured by CG, PCG and the Nyström path; ``exact`` is a direct solve with
-    nothing to seed and ignores it.
-
-    The ``"nystrom"`` path rebuilds a randomized low-rank preconditioner for
-    every free set — each ``A_F`` is a different operator, so unlike Jacobi
-    (a cheap ``diag(A)[F]`` slice) it cannot be cached across steps and pays
-    ``nystrom_rank + nystrom_oversample`` matrix-free products per solve on top
-    of the CG iterations. It is worth that cost only when each free block has a
-    steeply decaying spectrum.
-
-    Args:
-        op: The SPD operator ``A``.
-        inner: Inner solver — ``"cg"``, ``"pcg"``, ``"nystrom"``, or ``"exact"``.
-        cg_tol: Relative residual tolerance of the CG/PCG solves.
-        cg_maxit: Iteration cap per CG/PCG solve.
-        nystrom_rank: Sketch rank of the Nyström preconditioner (clamped to the
-            free-set size). Ignored unless ``inner="nystrom"``.
-        nystrom_oversample: Extra sketch columns for the Nyström build.
-        nystrom_shift: Explicit Nyström tail eigenvalue, or ``None`` for the
-            default (largest uncaptured eigenvalue).
-        nystrom_seed: Seed for the Nyström test matrix; fixed by default so the
-            solve is reproducible.
-
-    Returns:
-        A callable ``(idx, rhs, x0) -> (y, iters)``; each ``"exact"`` direct
-        solve counts as one iteration.
-
-    Raises:
-        ValueError: When ``inner`` is not one of ``"cg"``, ``"pcg"``,
-            ``"nystrom"``, ``"exact"`` (raised eagerly); when
-            ``inner="nystrom"`` with ``nystrom_rank < 1`` (raised eagerly) or
-            meets a free block whose numerical rank is below ``nystrom_rank``;
-            or, on the ``"exact"`` path, when a free block is numerically
-            singular (``op.rcond_free`` below 1e-12).
-        NotImplementedError: When ``inner="pcg"`` meets a backend without
-            ``diag`` (propagated from ``cvx.linalg``).
-    """
-    if inner not in ("cg", "pcg", "nystrom", "exact"):
-        msg = f"inner must be 'cg', 'pcg', 'nystrom', or 'exact'; got {inner!r}"
-        raise ValueError(msg)
-    if inner == "nystrom" and nystrom_rank < 1:
-        msg = f"nystrom_rank must be a positive integer; got {nystrom_rank}"
-        raise ValueError(msg)
-    dinv: Vector | None = None  # Jacobi preconditioner, read off op.diag on first use
-    checked: NDArray[np.int_] | None = None  # last free set whose SPD-ness was verified
-    ny_idx: NDArray[np.int_] | None = None  # free set of the cached Nyström preconditioner
-    ny_precond: Preconditioner | None = None  # sketch reused across a free set's p + 1 eq solves
-
-    def free_solve(idx: NDArray[np.int_], rhs: Vector, x0: Vector | None) -> tuple[Vector, int]:
-        nonlocal dinv, checked, ny_idx, ny_precond
-        if inner == "exact":
-            # The rcond guard depends only on the free set, not the right-hand
-            # side, so verify it once per free set — solve_nnqp_eq drives p + 1
-            # solves through the same idx and must not pay for p + 1 estimates.
-            if checked is None or not np.array_equal(checked, idx):
-                rcond = op.rcond_free(idx)
-                if rcond < _RCOND_MIN:
-                    msg = f"free block of size {idx.size} is numerically singular (rcond={rcond:.2e})"
-                    raise ValueError(msg)
-                checked = idx
-            return op.solve_free(idx, rhs), 1
-        if inner == "pcg":
-            if dinv is None:
-                dinv = inverse_diagonal(op)
-            precond = diagonal(dinv[idx])  # Jacobi on the free block: diag(A)[F] sliced
-            return pcg(_free_matvec(op, idx), rhs, precond, tol=cg_tol, maxit=cg_maxit, x0=x0)
-        if inner == "nystrom":
-            mv = _free_matvec(op, idx)
-            if idx.size == 0:  # empty free block: nothing to sketch or precondition
-                return cg(mv, rhs, tol=cg_tol, maxit=cg_maxit, x0=x0)
-            # The sketch depends only on A_F, so build it once per free set and
-            # reuse it across the p + 1 right-hand sides of an equality solve.
-            if ny_precond is None or ny_idx is None or not np.array_equal(ny_idx, idx):
-                ny_precond = nystrom(
-                    mv,
-                    idx.size,
-                    rank=nystrom_rank,
-                    oversample=nystrom_oversample,
-                    shift=nystrom_shift,
-                    seed=nystrom_seed,
-                )
-                ny_idx = idx
-            return pcg(mv, rhs, ny_precond, tol=cg_tol, maxit=cg_maxit, x0=x0)
-        return cg(_free_matvec(op, idx), rhs, tol=cg_tol, maxit=cg_maxit, x0=x0)
-
-    return free_solve
 
 
 @dataclass(frozen=True)
@@ -250,110 +118,6 @@ class Result:
     traj: list[tuple[int, ...]] | None = None
 
 
-def _active_set_loop(
-    n: int,
-    sub_solve: SubSolve,
-    reduced_gradient: ReducedGradient,
-    tol: float,
-    p_max: int,
-    track: bool = False,
-    max_outer: int | None = None,
-    warm: tuple[NDArray[np.bool_], Vector] | None = None,
-) -> Result:
-    """Run the guarded primal-dual active-set loop shared by both solvers.
-
-    The driver owns everything the termination proof depends on: the primal
-    and dual violator tests, the batch exchange with its patience counter,
-    and the least-index Bland fallback. What is solved on each free set — a
-    single reduced system, or the equality-augmented saddle system — enters
-    through the ``sub_solve`` callback, with ``reduced_gradient`` supplying
-    the matching dual test quantity.
-
-    Args:
-        n: Problem dimension.
-        sub_solve: Callback ``(idx, x0) -> (x_F, lam, inner_iters)`` solving
-            the subproblem on the free set ``idx``. ``x0`` is a warm inner
-            guess restricted to ``idx`` (None on a cold start); ``lam`` are
-            the equality multipliers (None for the bound-only problem).
-        reduced_gradient: Callback ``(x, lam) -> s`` computing the reduced
-            gradient that drives the dual violator test.
-        tol: Threshold of the primal and dual violator tests.
-        p_max: Patience budget — non-improving batch steps tolerated before a
-            fallback pivot. Any value gives finite termination.
-        track: Record the free-set trajectory in ``Result.traj``.
-        max_outer: Optional cap on outer steps; when hit, the current iterate
-            is returned with ``converged=False``.
-        warm: Optional ``(free_mask, x_prev)`` pair from a previous solve.
-            Starts the loop from that free set and seeds every subproblem
-            solve from the newest iterate.
-
-    Returns:
-        A :class:`Result`; ``lam`` is whatever the last subproblem returned.
-    """
-    if warm is None:
-        free = np.ones(n, dtype=bool)  # F = {1..n} initially
-        x_guess: Vector | None = None
-    else:
-        free = warm[0].copy()
-        x_guess = warm[1]
-    x = np.zeros(n)
-    lam: Vector | None = None
-    n_bar = n + 1
-    patience = p_max
-    outer = inner_total = fallback = 0
-    traj: list[tuple[int, ...]] | None = [] if track else None
-    converged = True
-
-    while True:
-        if max_outer is not None and outer >= max_outer:
-            converged = False
-            break
-        idx = np.flatnonzero(free)
-        if traj is not None:
-            traj.append(tuple(idx.tolist()))
-        x0 = x_guess[idx] if x_guess is not None else None
-        xf, lam, k_step = sub_solve(idx, x0)
-        outer += 1
-        inner_total += k_step
-
-        x = np.zeros(n)
-        x[idx] = xf
-        if x_guess is not None:
-            x_guess = x  # warm mode: newest iterate seeds the next reduced solve
-        s = reduced_gradient(x, lam)
-
-        prim = np.flatnonzero(free & (x < -tol))  # D: free but negative
-        dual = np.flatnonzero((~free) & (s < -tol))  # V: bound but s < 0
-        viol = np.concatenate([prim, dual])
-        n_viol = viol.size
-        if n_viol == 0:
-            break  # KKT satisfied -> unique global minimiser
-
-        if n_viol < n_bar or patience > 0:  # fast path: progress, or patience remains
-            if n_viol < n_bar:
-                n_bar = n_viol
-                patience = p_max
-            else:
-                patience -= 1
-            free[prim] = False  # batch exchange: drop all D, add all V
-            free[dual] = True
-        else:  # anti-cycling fallback: single Bland least-index pivot
-            fallback += 1
-            i_star = int(viol.min())
-            free[i_star] = not free[i_star]
-
-    return Result(
-        x=x,
-        outer=outer,
-        inner=inner_total,
-        fallback=fallback,
-        converged=converged,
-        free=free,
-        lam=lam,
-        traj=traj,
-    )
-
-
 def kkt_violation(a: SymmetricOperator, b: Vector, x: Vector) -> float:
     """Maximum violation of the KKT system of ``min_{x>=0} 1/2 x'Ax - b'x``.
 
@@ -367,9 +131,12 @@ def kkt_violation(a: SymmetricOperator, b: Vector, x: Vector) -> float:
         gradient ``s = A x - b``, and of the complementarity products
         ``|x_i s_i|``. Zero certifies the unique global minimiser.
     """
-    op = _require_operator(a)
-    _check_dimension(op, b)
-    s = op.matvec(x) - b
+    if not isinstance(a, SymmetricOperator):
+        raise TypeError(_NEEDS_OPERATOR)
+    if a.n != len(b):
+        msg = f"operator dimension {a.n} does not match len(b) = {len(b)}"
+        raise ValueError(msg)
+    s = a.matvec(x) - b
     return float(
         max(
             np.max(-x, initial=0.0),
@@ -379,228 +146,245 @@ def kkt_violation(a: SymmetricOperator, b: Vector, x: Vector) -> float:
     )
 
 
-def solve_nnqp(
-    a: SymmetricOperator,
-    b: Vector,
-    tol: float = 1e-8,
-    cg_tol: float = 1e-10,
-    p_max: int = 3,
-    inner: InnerSolver = "cg",
-    track: bool = False,
-    cg_maxit: int = 100_000,
-    max_outer: int | None = None,
-    warm: tuple[NDArray[np.bool_], Vector] | None = None,
-    nystrom_rank: int = 10,
-    nystrom_oversample: int = 10,
-    nystrom_shift: float | None = None,
-    nystrom_seed: int | None = 0,
-) -> Result:
-    """Minimise ``1/2 x^T A x - b^T x`` over ``x >= 0`` by the active-set loop.
+@dataclass(frozen=True)
+class ActiveSetSolver:
+    """The primal-dual active-set outer loop for the non-negative quadratic program.
 
-    Each free-block solve is matrix-free CG on ``v -> op.apply_free(F, v)``;
-    the reduced matrix is never materialised and ``A`` is never refactorised.
-    The batch block-pivot fast path is guarded by a least-index Bland
-    fallback, so termination at the unique global minimiser is unconditional
-    — no non-degeneracy assumption.
+    Holds the outer-loop :class:`ActiveSetConfig` and an
+    :class:`nncg.inner.InnerSolver`, and drives the guarded block-pivot loop
+    around the per-free-block solve the inner solver provides. It never touches a
+    preconditioner — everything about CG/PCG/Nyström lives in ``inner``.
 
-    Args:
-        a: The SPD operator ``A`` (a :class:`cvx.linalg.SymmetricOperator`) —
-            ``DenseOperator`` for an explicit array, ``GramOperator(M, ridge)``
-            for ``A = M^T M + ridge I`` whose Gram matrix is never formed.
-        b: The linear term ``b``.
-        tol: Threshold of the primal and dual violator tests.
-        cg_tol: Relative residual tolerance of the inner solves. Keep it a
-            couple of orders below ``tol`` so the inexact loop makes the same
-            sign decisions as the exact one (Lemma 5.1 of the paper).
-        p_max: Patience budget — non-improving batch steps tolerated before a
-            fallback pivot. Any value gives finite termination.
-        inner: ``"cg"`` (matrix-free), ``"pcg"`` (Jacobi-preconditioned from
-            ``op.diag``), ``"nystrom"`` (randomized Nyström-preconditioned CG,
-            a fresh low-rank sketch per free set — see the ``nystrom_*`` knobs),
-            or ``"exact"`` (direct solve of each free block via
-            ``op.solve_free``). Match the inner solver to the backend: pick
-            ``"exact"`` when ``solve_free`` is structured and cheap — e.g.
-            ``FactorOperator``'s Woodbury solve at ``O(|F| r^2)`` — CG when
-            only products are cheap (large dense ``A``, Gram factors with many
-            rows), and ``"nystrom"`` when those products are cheap but each
-            free block's spectrum decays steeply enough that a low-rank sketch
-            slashes the CG iteration count.
-        track: Record the free-set trajectory in ``Result.traj``.
-        cg_maxit: Iteration cap per inner solve.
-        max_outer: Optional cap on outer steps; when hit, the current iterate
-            is returned with ``converged=False``.
-        warm: Optional ``(free_mask, x_prev)`` pair from a previous solve.
-            Starts the loop from that free set and warm-starts every CG/PCG
-            call from the newest iterate (``inner="exact"`` is direct, so it
-            has nothing to seed but still starts from the warm free set) —
-            across a support-stable parameter step the loop then terminates in
-            a single outer step for every inner solver.
-        nystrom_rank: Sketch rank of the ``inner="nystrom"`` preconditioner,
-            clamped to each free-set size. Ignored by the other inner solvers.
-        nystrom_oversample: Extra sketch columns drawn per Nyström build for
-            accuracy (the standard randomized-SVD oversampling).
-        nystrom_shift: Explicit scalar tail eigenvalue for the Nyström
-            preconditioner, or ``None`` for the default (the largest
-            eigenvalue the sketch does not capture).
-        nystrom_seed: Seed for the Nyström test matrix, fixed by default so the
-            solve stays reproducible; pass ``None`` for a fresh draw.
-
-    Returns:
-        A :class:`Result`; ``converged`` is True iff the KKT system was
-        satisfied to ``tol``, which certifies the unique global minimiser.
-
-    Raises:
-        TypeError: When ``a`` is not a :class:`cvx.linalg.SymmetricOperator`.
-        ValueError: When the operator dimension does not match ``len(b)``;
-            when ``inner`` is not one of ``"cg"``, ``"pcg"``, ``"nystrom"``,
-            ``"exact"``; when ``inner="nystrom"`` with ``nystrom_rank < 1`` or a
-            free block whose numerical rank is below ``nystrom_rank``; or when
-            ``inner="exact"`` meets a numerically singular free block
-            (``op.rcond_free`` below 1e-12) — ``A`` is then not positive
-            definite on that free set; add a ridge.
-        NotImplementedError: When ``inner="pcg"`` meets a backend that does
-            not expose ``diag`` (propagated from ``cvx.linalg``).
+    Attributes:
+        inner: The inner solver for each free block — e.g. :class:`nncg.inner.CG`
+            (plain CG), :class:`nncg.inner.Jacobi`, :class:`nncg.inner.Nystrom`
+            or :class:`nncg.inner.Exact`.
+        config: Outer-loop configuration (violator tolerance, patience,
+            trajectory tracking, outer-step cap).
     """
-    op = _require_operator(a)
-    _check_dimension(op, b)
-    free_solve = _make_free_solve(
-        op, inner, cg_tol, cg_maxit, nystrom_rank, nystrom_oversample, nystrom_shift, nystrom_seed
-    )
 
-    def sub_solve(idx: NDArray[np.int_], x0: Vector | None) -> tuple[Vector, Vector | None, int]:
-        """Solve the reduced system ``A_F x_F = b_F`` with the chosen inner solver."""
-        xf, k_step = free_solve(idx, b[idx], x0)
-        return xf, None, k_step
+    inner: InnerSolver
+    config: ActiveSetConfig = field(default_factory=ActiveSetConfig)
 
-    def reduced_gradient(x: Vector, lam: Vector | None) -> Vector:  # noqa: ARG001
-        """Return the reduced gradient ``s = A x - b``."""
-        return op.matvec(x) - b
+    def solve(
+        self,
+        a: SymmetricOperator,
+        b: Vector,
+        warm: tuple[NDArray[np.bool_], Vector] | None = None,
+    ) -> Result:
+        """Minimise ``1/2 x^T A x - b^T x`` over ``x >= 0`` by the active-set loop.
 
-    return _active_set_loop(
-        len(b),
-        sub_solve,
-        reduced_gradient,
-        tol=tol,
-        p_max=p_max,
-        track=track,
-        max_outer=max_outer,
-        warm=warm,
-    )
+        Each free-block solve is delegated to :attr:`inner`; the reduced matrix
+        is never materialised and ``A`` is never refactorised. The batch
+        block-pivot fast path is guarded by a least-index Bland fallback, so
+        termination at the unique global minimiser is unconditional.
 
+        Args:
+            a: The SPD operator ``A`` (a :class:`cvx.linalg.SymmetricOperator`) —
+                ``DenseOperator`` for an explicit array, ``GramOperator(M, ridge)``
+                for ``A = M^T M + ridge I`` whose Gram matrix is never formed.
+            b: The linear term ``b``.
+            warm: Optional ``(free_mask, x_prev)`` pair from a previous solve.
+                Starts the loop from that free set and warm-starts every inner
+                solve from the newest iterate (``inner.kind="exact"`` is direct,
+                so it has nothing to seed but still starts from the warm free
+                set) — across a support-stable parameter step the loop then
+                terminates in a single outer step.
 
-def solve_nnqp_eq(
-    a: SymmetricOperator,
-    b: Vector,
-    b_eq: Matrix,
-    c_eq: Vector,
-    tol: float = 1e-8,
-    cg_tol: float = 1e-10,
-    p_max: int = 3,
-    inner: InnerSolver = "cg",
-    track: bool = False,
-    cg_maxit: int = 100_000,
-    max_outer: int | None = None,
-    warm: tuple[NDArray[np.bool_], Vector] | None = None,
-    nystrom_rank: int = 10,
-    nystrom_oversample: int = 10,
-    nystrom_shift: float | None = None,
-    nystrom_seed: int | None = 0,
-) -> Result:
-    """Solve ``min 1/2 x^T A x - b^T x`` subject to ``x >= 0`` and ``B x = c``.
+        Returns:
+            A :class:`Result`; ``converged`` is True iff the KKT system was
+            satisfied to ``config.tol``, which certifies the unique global
+            minimiser.
 
-    On each free set the saddle system is solved by eliminating the multiplier
-    ``lambda`` in R^p through the p-by-p Schur complement
-    ``S = B_F A_F^{-1} B_F^T``: the ``p + 1`` right-hand sides share the
-    operator ``A_F`` and are each one inner solve (see ``inner``), then
-    ``S lambda = c - B_F v0`` fixes the multipliers in closed form. The single
-    normalisation ``1^T x = beta`` is the ``p = 1`` case. ``B`` must have full
-    row rank on the visited free sets (automatic for ``p = 1``).
+        Raises:
+            TypeError: When ``a`` is not a :class:`cvx.linalg.SymmetricOperator`.
+            ValueError: When the operator dimension does not match ``len(b)``, or
+                on the inner-solver conditions in
+                :meth:`InnerSolver.bind`.
+            NotImplementedError: When ``inner.kind="pcg"`` meets a backend
+                without ``diag`` (propagated from ``cvx.linalg``).
+        """
+        if not isinstance(a, SymmetricOperator):
+            raise TypeError(_NEEDS_OPERATOR)
+        if a.n != len(b):
+            msg = f"operator dimension {a.n} does not match len(b) = {len(b)}"
+            raise ValueError(msg)
 
-    Args:
-        a: The SPD operator ``A`` (a :class:`cvx.linalg.SymmetricOperator`).
-        b: The linear term ``b``.
-        b_eq: Equality matrix ``B`` of shape ``(p, n)``, full row rank.
-        c_eq: Equality right-hand side ``c`` of shape ``(p,)``.
-        tol: Threshold of the primal and dual violator tests.
-        cg_tol: Relative residual tolerance of the inner CG/PCG solves.
-        p_max: Patience budget of the batch fast path.
-        inner: Inner solver for each free block, applied to all ``p + 1``
-            right-hand sides — ``"cg"`` (matrix-free), ``"pcg"`` (Jacobi from
-            ``op.diag``), ``"nystrom"`` (randomized Nyström-preconditioned CG),
-            or ``"exact"`` (direct ``op.solve_free``); the same choice
-            :func:`solve_nnqp` offers. The ``"nystrom"`` sketch depends only on
-            ``A_F``, so it is built once per free set and reused across all
-            ``p + 1`` right-hand sides.
-        track: Record the free-set trajectory in ``Result.traj``.
-        cg_maxit: Iteration cap per inner CG/PCG solve.
-        max_outer: Optional cap on outer steps; when hit, the current iterate
-            is returned with ``converged=False``.
-        warm: Optional ``(free_mask, x_prev)`` pair from a previous solve —
-            the same tuple :func:`solve_nnqp` accepts. Starts the loop from
-            that free set and seeds the ``v0`` solve of every saddle step
-            from the newest iterate; the ``v1`` columns are re-solved cold
-            (their right-hand sides are the rows of ``B_F``, unrelated to
-            ``x_prev``, so it offers no seed for them). Both ``inner="cg"``
-            and ``inner="pcg"`` consume the ``v0`` inner seed; ``inner="exact"``
-            is direct and has nothing to seed. All three start from the warm
-            free set, so across a support-stable parameter step the loop
-            terminates in a single outer step for every inner solver.
-        nystrom_rank: Sketch rank of the ``inner="nystrom"`` preconditioner,
-            clamped to each free-set size. Ignored by the other inner solvers.
-        nystrom_oversample: Extra sketch columns drawn per Nyström build.
-        nystrom_shift: Explicit scalar tail eigenvalue for the Nyström
-            preconditioner, or ``None`` for the default (largest uncaptured
-            eigenvalue).
-        nystrom_seed: Seed for the Nyström test matrix, fixed by default so the
-            solve stays reproducible; pass ``None`` for a fresh draw.
+        def sub_solve(idx: NDArray[np.int_], x0: Vector | None) -> tuple[Vector, Vector | None, int]:
+            """Solve the reduced system ``A_F x_F = b_F`` with the chosen inner solver."""
+            xf, k_step = self.inner.solve(a, idx, b[idx], x0)
+            return xf, None, k_step
 
-    Returns:
-        A :class:`Result` with the multipliers in ``lam``. The reduced
-        gradient underlying the dual test is ``s = A x - b - B^T lam``.
+        def reduced_gradient(x: Vector, lam: Vector | None) -> Vector:  # noqa: ARG001
+            """Return the reduced gradient ``s = A x - b``."""
+            return a.matvec(x) - b
 
-    Raises:
-        TypeError: When ``a`` is not a :class:`cvx.linalg.SymmetricOperator`.
-        ValueError: When the operator dimension does not match ``len(b)``;
-            when ``inner`` is not one of ``"cg"``, ``"pcg"``, ``"nystrom"``,
-            ``"exact"``; when ``inner="nystrom"`` with ``nystrom_rank < 1`` or a
-            free block whose numerical rank is below ``nystrom_rank``; or when
-            ``inner="exact"`` meets a numerically singular free block.
-        NotImplementedError: When ``inner="pcg"`` meets a backend that does
-            not expose ``diag`` (propagated from ``cvx.linalg``).
-    """
-    op = _require_operator(a)
-    _check_dimension(op, b)
-    p = b_eq.shape[0]
-    free_solve = _make_free_solve(
-        op, inner, cg_tol, cg_maxit, nystrom_rank, nystrom_oversample, nystrom_shift, nystrom_seed
-    )
+        return self._run(len(b), sub_solve, reduced_gradient, warm)
 
-    def sub_solve(idx: NDArray[np.int_], x0: Vector | None) -> tuple[Vector, Vector | None, int]:
-        """Solve the saddle system on the free set via the p-by-p Schur complement."""
-        b_f = b_eq[:, idx]
-        v0, k0 = free_solve(idx, b[idx], x0)
-        v1 = np.zeros((idx.size, p))
-        k_cols = 0
-        for j in range(p):
-            v1[:, j], kj = free_solve(idx, b_f[j], None)
-            k_cols += kj
-        schur = b_f @ v1  # p-by-p Schur complement, SPD
-        lam = cholesky_solve(schur, c_eq - b_f @ v0)
-        xf = v0 + v1 @ lam  # x_F = A_F^{-1}(b_F + B_F^T lambda)
-        return xf, lam, k0 + k_cols
+    def solve_eq(
+        self,
+        a: SymmetricOperator,
+        b: Vector,
+        b_eq: Matrix,
+        c_eq: Vector,
+        warm: tuple[NDArray[np.bool_], Vector] | None = None,
+    ) -> Result:
+        """Solve ``min 1/2 x^T A x - b^T x`` subject to ``x >= 0`` and ``B x = c``.
 
-    def reduced_gradient(x: Vector, lam: Vector | None) -> Vector:
-        """Return the constrained reduced gradient ``s = A x - b - B^T lam``."""
-        correction = b_eq.T @ lam if lam is not None else np.zeros_like(b)
-        return op.matvec(x) - b - correction
+        On each free set the saddle system is solved by eliminating the
+        multiplier ``lambda`` in R^p through the p-by-p Schur complement
+        ``S = B_F A_F^{-1} B_F^T``: the ``p + 1`` right-hand sides share the
+        operator ``A_F`` and are each one inner solve, then ``S lambda = c - B_F
+        v0`` fixes the multipliers in closed form. The single normalisation
+        ``1^T x = beta`` is the ``p = 1`` case. ``B`` must have full row rank on
+        the visited free sets (automatic for ``p = 1``).
 
-    return _active_set_loop(
-        len(b),
-        sub_solve,
-        reduced_gradient,
-        tol=tol,
-        p_max=p_max,
-        track=track,
-        max_outer=max_outer,
-        warm=warm,
-    )
+        Args:
+            a: The SPD operator ``A`` (a :class:`cvx.linalg.SymmetricOperator`).
+            b: The linear term ``b``.
+            b_eq: Equality matrix ``B`` of shape ``(p, n)``, full row rank.
+            c_eq: Equality right-hand side ``c`` of shape ``(p,)``.
+            warm: Optional ``(free_mask, x_prev)`` pair from a previous solve.
+                Starts the loop from that free set and seeds the ``v0`` solve of
+                every saddle step from the newest iterate; the ``v1`` columns are
+                re-solved cold (their right-hand sides are the rows of ``B_F``,
+                unrelated to ``x_prev``). Across a support-stable parameter step
+                the loop then terminates in a single outer step.
+
+        Returns:
+            A :class:`Result` with the multipliers in ``lam``. The reduced
+            gradient underlying the dual test is ``s = A x - b - B^T lam``.
+
+        Raises:
+            TypeError: When ``a`` is not a :class:`cvx.linalg.SymmetricOperator`.
+            ValueError: When the operator dimension does not match ``len(b)``, or
+                on the inner-solver conditions in
+                :meth:`InnerSolver.bind`.
+            NotImplementedError: When ``inner.kind="pcg"`` meets a backend
+                without ``diag`` (propagated from ``cvx.linalg``).
+        """
+        if not isinstance(a, SymmetricOperator):
+            raise TypeError(_NEEDS_OPERATOR)
+        if a.n != len(b):
+            msg = f"operator dimension {a.n} does not match len(b) = {len(b)}"
+            raise ValueError(msg)
+        p = b_eq.shape[0]
+
+        def sub_solve(idx: NDArray[np.int_], x0: Vector | None) -> tuple[Vector, Vector | None, int]:
+            """Solve the saddle system on the free set via the p-by-p Schur complement."""
+            b_f = b_eq[:, idx]
+            v0, k0 = self.inner.solve(a, idx, b[idx], x0)
+            v1 = np.zeros((idx.size, p))
+            k_cols = 0
+            for j in range(p):
+                v1[:, j], kj = self.inner.solve(a, idx, b_f[j], None)
+                k_cols += kj
+            schur = b_f @ v1  # p-by-p Schur complement, SPD
+            lam = cholesky_solve(schur, c_eq - b_f @ v0)
+            xf = v0 + v1 @ lam  # x_F = A_F^{-1}(b_F + B_F^T lambda)
+            return xf, lam, k0 + k_cols
+
+        def reduced_gradient(x: Vector, lam: Vector | None) -> Vector:
+            """Return the constrained reduced gradient ``s = A x - b - B^T lam``."""
+            correction = b_eq.T @ lam if lam is not None else np.zeros_like(b)
+            return a.matvec(x) - b - correction
+
+        return self._run(len(b), sub_solve, reduced_gradient, warm)
+
+    def _run(
+        self,
+        n: int,
+        sub_solve: SubSolve,
+        reduced_gradient: ReducedGradient,
+        warm: tuple[NDArray[np.bool_], Vector] | None,
+    ) -> Result:
+        """Run the guarded primal-dual active-set loop.
+
+        The driver owns everything the termination proof depends on: the primal
+        and dual violator tests, the batch exchange with its patience counter,
+        and the least-index Bland fallback. What is solved on each free set — a
+        single reduced system (:meth:`solve`), or the equality-augmented saddle
+        system (:meth:`solve_eq`) — enters through the ``sub_solve`` callback,
+        with ``reduced_gradient`` supplying the matching dual test quantity. The
+        thresholds (``tol``, ``p_max``, ``track``, ``max_outer``) are read from
+        :attr:`config`.
+
+        Args:
+            n: Problem dimension.
+            sub_solve: Callback ``(idx, x0) -> (x_F, lam, inner_iters)`` solving
+                the subproblem on the free set ``idx``. ``x0`` is a warm inner
+                guess restricted to ``idx`` (None on a cold start); ``lam`` are
+                the equality multipliers (None for the bound-only problem).
+            reduced_gradient: Callback ``(x, lam) -> s`` computing the reduced
+                gradient that drives the dual violator test.
+            warm: Optional ``(free_mask, x_prev)`` pair from a previous solve.
+                Starts the loop from that free set and seeds every subproblem
+                solve from the newest iterate.
+
+        Returns:
+            A :class:`Result`; ``lam`` is whatever the last subproblem returned.
+        """
+        tol, p_max = self.config.tol, self.config.p_max
+        max_outer = self.config.max_outer
+        if warm is None:
+            free = np.ones(n, dtype=bool)  # F = {1..n} initially
+            x_guess: Vector | None = None
+        else:
+            free = warm[0].copy()
+            x_guess = warm[1]
+        x = np.zeros(n)
+        lam: Vector | None = None
+        n_bar = n + 1
+        patience = p_max
+        outer = inner_total = fallback = 0
+        traj: list[tuple[int, ...]] | None = [] if self.config.track else None
+        converged = True
+
+        while True:
+            if max_outer is not None and outer >= max_outer:
+                converged = False
+                break
+            idx = np.flatnonzero(free)
+            if traj is not None:
+                traj.append(tuple(idx.tolist()))
+            x0 = x_guess[idx] if x_guess is not None else None
+            xf, lam, k_step = sub_solve(idx, x0)
+            outer += 1
+            inner_total += k_step
+
+            x = np.zeros(n)
+            x[idx] = xf
+            if x_guess is not None:
+                x_guess = x  # warm mode: newest iterate seeds the next reduced solve
+            s = reduced_gradient(x, lam)
+
+            prim = np.flatnonzero(free & (x < -tol))  # D: free but negative
+            dual = np.flatnonzero((~free) & (s < -tol))  # V: bound but s < 0
+            viol = np.concatenate([prim, dual])
+            n_viol = viol.size
+            if n_viol == 0:
+                break  # KKT satisfied -> unique global minimiser
+
+            if n_viol < n_bar or patience > 0:  # fast path: progress, or patience remains
+                if n_viol < n_bar:
+                    n_bar = n_viol
+                    patience = p_max
+                else:
+                    patience -= 1
+                free[prim] = False  # batch exchange: drop all D, add all V
+                free[dual] = True
+            else:  # anti-cycling fallback: single Bland least-index pivot
+                fallback += 1
+                i_star = int(viol.min())
+                free[i_star] = not free[i_star]
+
+        return Result(
+            x=x,
+            outer=outer,
+            inner=inner_total,
+            fallback=fallback,
+            converged=converged,
+            free=free,
+            lam=lam,
+            traj=traj,
+        )
