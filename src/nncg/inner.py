@@ -232,14 +232,31 @@ class Exact:
     memoised in a private single slot — keyed on operator identity so the memo can
     never carry a stale verdict across operators, and excluded from equality/repr
     so ``Exact`` stays a value.
+
+    On the plain :meth:`~nncg.solver.ActiveSetSolver.solve` path every outer step
+    visits a *different* free set, so the memo never hits and the guard is paid on
+    every step — where, for a dense free block, the ``O(|F|^3)`` eigendecomposition
+    can cost several times the Cholesky solve it precedes. The guard is also
+    redundant when ``solve_free`` already fails loudly on a rank-deficient block
+    (e.g. ``cvx.linalg.cholesky_solve``'s Cholesky→LU fallback). Set
+    ``check_conditioning=False`` to skip it and let ``solve_free`` surface any
+    singularity itself.
+
+    Attributes:
+        check_conditioning: Estimate ``rcond_free`` and raise on a numerically
+            singular free block before each (new) solve. Default ``True``; set
+            ``False`` to trade the diagnostic for the raw structured solve.
     """
 
+    check_conditioning: bool = True
     _checked_op: SymmetricOperator | None = field(default=None, compare=False, repr=False)
     _checked_idx: NDArray[np.int_] | None = field(default=None, compare=False, repr=False)
 
     def solve(self, op: SymmetricOperator, idx: NDArray[np.int_], rhs: Vector, x0: Vector | None) -> tuple[Vector, int]:  # noqa: ARG002
         """Solve the free block ``A[F, F] y = rhs`` directly, guarding its conditioning once per free set."""
-        if self._checked_op is not op or self._checked_idx is None or not np.array_equal(self._checked_idx, idx):
+        if self.check_conditioning and (
+            self._checked_op is not op or self._checked_idx is None or not np.array_equal(self._checked_idx, idx)
+        ):
             rcond = op.rcond_free(idx)
             if rcond < _RCOND_MIN:
                 msg = f"free block of size {idx.size} is numerically singular (rcond={rcond:.2e})"

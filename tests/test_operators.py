@@ -115,6 +115,39 @@ def test_exact_inner_guards_singular_free_block() -> None:
         ActiveSetSolver(inner=Exact()).solve(GramOperator(m, ridge=0.0), b)
 
 
+def test_exact_check_conditioning_false_skips_rcond_guard() -> None:
+    """``Exact(check_conditioning=False)`` solves without ever calling ``rcond_free``.
+
+    The guard is an ``O(|F|^3)`` eigendecomposition paid on every new free set;
+    opting out (issue #32) drops it entirely while ``solve_free`` still returns
+    the same optimum on a well-conditioned problem.
+    """
+
+    class _CountingOperator(DenseOperator):
+        """Dense operator that tallies its ``rcond_free`` calls."""
+
+        def __init__(self, a: np.ndarray) -> None:
+            super().__init__(a)
+            self.rcond_calls = 0
+
+        def rcond_free(self, free: object) -> float:
+            self.rcond_calls += 1
+            return float(super().rcond_free(free))
+
+    a, b, x_star, _ = make_problem(60, 1e2, seed=1)
+
+    guarded = _CountingOperator(a)
+    res_g = ActiveSetSolver(inner=Exact()).solve(guarded, b)
+    assert guarded.rcond_calls > 0  # the default guard runs
+
+    op = _CountingOperator(a)
+    res = ActiveSetSolver(inner=Exact(check_conditioning=False)).solve(op, b)
+    assert op.rcond_calls == 0  # opting out skips the eigendecomposition entirely
+    assert res.converged
+    assert np.max(np.abs(res.x - x_star)) < 1e-6
+    assert np.max(np.abs(res.x - res_g.x)) < 1e-9  # same solve, guard or not
+
+
 def test_dimension_mismatch_is_rejected() -> None:
     """An operator whose dimension disagrees with len(b) is refused at entry."""
     a, b, _, _ = make_problem(20, 1e2, seed=0)
