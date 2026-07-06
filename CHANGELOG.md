@@ -5,11 +5,22 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com),
 and entries are generated from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.5.0] - 2026-07-06
+
+### New Features
+- Add solve_nnqp / solve_nnqp_eq one-call convenience wrappers (#34)
+
+### Documentation
+- Fix stale inner-solver references in solver.py docstrings (#36)
+
 ## [0.4.2] - 2026-07-06
 
 ### Bug Fixes
 - Estimate rcond_free once per free set on the exact path (#30) (#31)
 - *(exact)* Make the rcond_free conditioning guard opt-out (#32) (#33)
+
+### Other Changes
+- Bump version 0.4.0 → 0.4.2
 
 ## [0.4.0] - 2026-07-06
 
