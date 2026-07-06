@@ -5,6 +5,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com),
 and entries are generated from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.4.1] - 2026-07-06
+
+### Bug Fixes
+- Estimate rcond_free once per free set on the exact path (#30)
+
 ## [0.4.0] - 2026-07-06
 
 ### New Features
@@ -12,6 +17,9 @@ and entries are generated from [Conventional Commits](https://www.conventionalco
 
 ### Maintenance
 - Layer the API as ActiveSetSolver + pluggable InnerSolver (#29)
+
+### Other Changes
+- Bump version 0.3.2 → 0.4.0
 
 ## [0.3.2] - 2026-07-05
 
