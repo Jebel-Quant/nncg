@@ -49,6 +49,13 @@ explicit SPD array in `DenseOperator`. When $A = M^\top M$ is a Gram matrix,
 pass `GramOperator(M, ridge)` and the inner solves need only products with
 $M$ — the $n \times n$ matrix is never formed and working memory is $O(n)$.
 
+Each free-block solve is delegated to a **pluggable inner solver** — plain CG
+(`CG`), Jacobi- or randomized-Nyström-preconditioned CG (`Jacobi`, `Nystrom`),
+or a direct factorisation (`Exact`) — so you match the inner solve to the
+operator's structure without touching the outer loop. `ActiveSetSolver` owns the
+loop and knows nothing about preconditioning; new inner solvers plug in by
+implementing a one-method `InnerSolver` interface.
+
 ## 📦 Installation
 
 ```bash
@@ -60,30 +67,32 @@ pip install nncg
 ```python
 import numpy as np
 from cvx.linalg import DenseOperator, GramOperator
-from nncg import kkt_violation, solve_nnqp, solve_nnqp_eq
+from nncg import ActiveSetSolver, CG, Jacobi, kkt_violation
 
 # a random SPD problem with condition number 1e4
 rng = np.random.default_rng(0)
 Q, _ = np.linalg.qr(rng.standard_normal((200, 200)))
 A = (Q * np.geomspace(1.0, 1e4, 200)) @ Q.T
 b = rng.standard_normal(200)
-op = DenseOperator(A)                     # the solvers take a SymmetricOperator
+op = DenseOperator(A)                      # the solver takes a SymmetricOperator
 
-res = solve_nnqp(op, b)
-assert res.converged                      # stopped on the KKT certificate
-assert kkt_violation(op, b, res.x) < 1e-6 # zero certifies the global minimiser
+solver = ActiveSetSolver(inner=CG())       # plug in the inner solver: CG / Jacobi / Nystrom / Exact
+res = solver.solve(op, b)
+assert res.converged                       # stopped on the KKT certificate
+assert kkt_violation(op, b, res.x) < 1e-6  # zero certifies the global minimiser
 
 # equality-augmented: minimise subject to x >= 0 and B x = c
-B = np.ones((1, 200))                     # p = 1: the budget 1'x = 1
-res_eq = solve_nnqp_eq(op, b, B, np.array([1.0]))
-assert res_eq.lam.shape == (1,)           # multiplier, via a p-by-p Schur solve
+B = np.ones((1, 200))                      # p = 1: the budget 1'x = 1
+res_eq = solver.solve_eq(op, b, B, np.array([1.0]))
+assert res_eq.lam.shape == (1,)            # multiplier, via a p-by-p Schur solve
 
 # warm-start a parametric sweep: support-stable steps take ONE outer step
-res2 = solve_nnqp(op, b + 1e-4, warm=(res.free, res.x))
+res2 = solver.solve(op, b + 1e-4, warm=(res.free, res.x))
 
-# Gram-structured: A = M'M + I only through products with M — never formed
+# Gram-structured: A = M'M + I only through products with M — never formed.
+# Swap the inner solver freely — here Jacobi to strip the diagonal scaling.
 M = np.random.default_rng(1).standard_normal((50, 200))
-res_g = solve_nnqp(GramOperator(M, ridge=1.0), M.T @ np.ones(50))
+res_g = ActiveSetSolver(inner=Jacobi()).solve(GramOperator(M, ridge=1.0), M.T @ np.ones(50))
 assert res_g.converged
 ```
 

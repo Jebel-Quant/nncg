@@ -112,7 +112,7 @@ def make_simplex_problem(
 
     The ``p = 1`` equality-augmented plant whose single constraint is the
     all-ones normalisation ``1^T x = beta`` — the shared fixture for comparing
-    the equality solvers (``solve_nnqp_eq`` with ``B = 1^T``, OSQP, Clarabel)
+    the equality solvers (``ActiveSetSolver.solve_eq`` with ``B = 1^T``, OSQP, Clarabel)
     against the simplex-restricted first-order method (Duchi), which is defined
     only for this constraint. ``A`` is built as in :func:`make_problem`; a
     support of size at least two carries ``x* > 0`` rescaled to sum to

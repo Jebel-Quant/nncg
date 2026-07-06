@@ -13,14 +13,22 @@ suite: https://github.com/Jebel-Quant/mean_variance_solvers.
 
 import importlib.metadata
 
-from .solver import InnerSolver, Result, kkt_violation, solve_nnqp, solve_nnqp_eq
+from .inner import CG, Exact, Jacobi, Nystrom, NystromConfig
+from .krylov import KrylovConfig
+from .solver import ActiveSetConfig, ActiveSetSolver, InnerSolver, Result, kkt_violation
 
 __all__ = [
+    "CG",
+    "ActiveSetConfig",
+    "ActiveSetSolver",
+    "Exact",
     "InnerSolver",
+    "Jacobi",
+    "KrylovConfig",
+    "Nystrom",
+    "NystromConfig",
     "Result",
     "kkt_violation",
-    "solve_nnqp",
-    "solve_nnqp_eq",
 ]
 
 try:

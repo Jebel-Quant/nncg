@@ -3,7 +3,7 @@
 import numpy as np
 from cvx.linalg import DenseOperator, SymmetricOperator
 
-from nncg.solver import _free_matvec
+from nncg.inner import _free_matvec
 
 
 def _dense_pair(seed: int = 0) -> tuple[DenseOperator, np.ndarray]:
