@@ -64,36 +64,52 @@ pip install nncg
 
 ## 🚀 Quickstart
 
+The one-call `solve_nnqp` / `solve_nnqp_eq` wrappers cover the common case —
+pass a plain SPD array and name the inner solver as a string:
+
 ```python
 import numpy as np
-from cvx.linalg import DenseOperator, GramOperator
-from nncg import ActiveSetSolver, CG, Jacobi, kkt_violation
+from nncg import solve_nnqp, solve_nnqp_eq
 
 # a random SPD problem with condition number 1e4
 rng = np.random.default_rng(0)
 Q, _ = np.linalg.qr(rng.standard_normal((200, 200)))
 A = (Q * np.geomspace(1.0, 1e4, 200)) @ Q.T
 b = rng.standard_normal(200)
-op = DenseOperator(A)                      # the solver takes a SymmetricOperator
 
-solver = ActiveSetSolver(inner=CG())       # plug in the inner solver: CG / Jacobi / Nystrom / Exact
-res = solver.solve(op, b)
+res = solve_nnqp(A, b, inner="cg")         # inner solver: "cg" / "jacobi" / "nystrom" / "exact"
 assert res.converged                       # stopped on the KKT certificate
-assert kkt_violation(op, b, res.x) < 1e-6  # zero certifies the global minimiser
 
 # equality-augmented: minimise subject to x >= 0 and B x = c
 B = np.ones((1, 200))                      # p = 1: the budget 1'x = 1
-res_eq = solver.solve_eq(op, b, B, np.array([1.0]))
+res_eq = solve_nnqp_eq(A, b, B, np.array([1.0]), inner="jacobi")
 assert res_eq.lam.shape == (1,)            # multiplier, via a p-by-p Schur solve
+```
+
+For reuse across a parametric sweep, a matrix-free Gram operator, or a tuned
+inner solver, build the `ActiveSetSolver` and its operator directly — the
+wrappers are logic-free shortcuts to exactly this:
+
+```python
+from cvx.linalg import DenseOperator, GramOperator
+from nncg import ActiveSetSolver, CG, Jacobi, Nystrom, NystromConfig, kkt_violation
+
+op = DenseOperator(A)                       # kkt_violation takes a SymmetricOperator too
+solver = ActiveSetSolver(inner=CG())        # configure once, reuse across problems
+res = solver.solve(op, b)
+assert kkt_violation(op, b, res.x) < 1e-6   # zero certifies the global minimiser
 
 # warm-start a parametric sweep: support-stable steps take ONE outer step
 res2 = solver.solve(op, b + 1e-4, warm=(res.free, res.x))
 
 # Gram-structured: A = M'M + I only through products with M — never formed.
 # Swap the inner solver freely — here Jacobi to strip the diagonal scaling.
-M = np.random.default_rng(1).standard_normal((50, 200))
+M = rng.standard_normal((50, 200))
 res_g = ActiveSetSolver(inner=Jacobi()).solve(GramOperator(M, ridge=1.0), M.T @ np.ones(50))
 assert res_g.converged
+
+# tuned inner solver: pass the instance (the string shortcut takes defaults only)
+res_n = ActiveSetSolver(inner=Nystrom(nystrom=NystromConfig(rank=20))).solve(op, b)
 ```
 
 ## 🔬 The algorithm in one paragraph
