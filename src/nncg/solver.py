@@ -186,10 +186,10 @@ class ActiveSetSolver:
             b: The linear term ``b``.
             warm: Optional ``(free_mask, x_prev)`` pair from a previous solve.
                 Starts the loop from that free set and warm-starts every inner
-                solve from the newest iterate (``inner.kind="exact"`` is direct,
-                so it has nothing to seed but still starts from the warm free
-                set) — across a support-stable parameter step the loop then
-                terminates in a single outer step.
+                solve from the newest iterate (the :class:`nncg.inner.Exact`
+                inner solver is direct, so it has nothing to seed but still
+                starts from the warm free set) — across a support-stable
+                parameter step the loop then terminates in a single outer step.
 
         Returns:
             A :class:`Result`; ``converged`` is True iff the KKT system was
@@ -199,10 +199,11 @@ class ActiveSetSolver:
         Raises:
             TypeError: When ``a`` is not a :class:`cvx.linalg.SymmetricOperator`.
             ValueError: When the operator dimension does not match ``len(b)``, or
-                on the inner-solver conditions in
-                :meth:`InnerSolver.bind`.
-            NotImplementedError: When ``inner.kind="pcg"`` meets a backend
-                without ``diag`` (propagated from ``cvx.linalg``).
+                on the inner solver's own conditions in
+                :meth:`InnerSolver.solve`.
+            NotImplementedError: When a diagonal-preconditioned inner solver
+                (:class:`nncg.inner.Jacobi`) meets a backend without ``diag``
+                (propagated from ``cvx.linalg``).
         """
         if not isinstance(a, SymmetricOperator):
             raise TypeError(_NEEDS_OPERATOR)
@@ -258,10 +259,11 @@ class ActiveSetSolver:
         Raises:
             TypeError: When ``a`` is not a :class:`cvx.linalg.SymmetricOperator`.
             ValueError: When the operator dimension does not match ``len(b)``, or
-                on the inner-solver conditions in
-                :meth:`InnerSolver.bind`.
-            NotImplementedError: When ``inner.kind="pcg"`` meets a backend
-                without ``diag`` (propagated from ``cvx.linalg``).
+                on the inner solver's own conditions in
+                :meth:`InnerSolver.solve`.
+            NotImplementedError: When a diagonal-preconditioned inner solver
+                (:class:`nncg.inner.Jacobi`) meets a backend without ``diag``
+                (propagated from ``cvx.linalg``).
         """
         if not isinstance(a, SymmetricOperator):
             raise TypeError(_NEEDS_OPERATOR)
