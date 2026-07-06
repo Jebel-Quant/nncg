@@ -25,8 +25,14 @@ changes are overwritten on the next sync. Repo-owned files are `Makefile`,
 
 ## Layout
 
-- `src/nncg/solver.py` — the active-set loop (`solve_nnqp`, `solve_nnqp_eq`),
-  the `Result` dataclass, and the `kkt_violation` certificate.
+- `src/nncg/solver.py` — the active-set loop (`ActiveSetSolver` and its
+  `ActiveSetConfig`, the `InnerSolver` protocol), the `Result` dataclass, and
+  the `kkt_violation` certificate.
+- `src/nncg/inner.py` — the built-in inner solvers (`CG`, `Jacobi`, `Nystrom`,
+  `Exact`) and the preconditioner builders they use.
+- `src/nncg/api.py` — the one-call convenience wrappers `solve_nnqp` /
+  `solve_nnqp_eq` over `ActiveSetSolver`; logic-free, they just wrap arrays in
+  `DenseOperator` and resolve the `inner` string shortcut.
 - `src/nncg/krylov.py` — plain and Jacobi-preconditioned CG, warm-startable.
 - `tests/problems.py` — planted-optimum generators, including the adversarial
   anti-correlated family that forces the Bland fallback. Deliberately outside
