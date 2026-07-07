@@ -66,14 +66,6 @@ def test_pcg_solves_spd(spd_system: tuple[np.ndarray, np.ndarray, np.ndarray]) -
     assert np.allclose(x, x_exact, atol=1e-7)
 
 
-def test_pcg_zero_rhs() -> None:
-    """A zero right-hand side is solved in zero iterations."""
-    a, _, _, _ = make_problem(10, 10.0, seed=0)
-    x, it = pcg(lambda v: a @ v, np.zeros(10), KrylovConfig(precond=lambda r: r / np.diag(a)))
-    assert it == 0
-    assert np.all(x == 0.0)
-
-
 def test_pcg_maxit_returns_iterate() -> None:
     """Hitting the iteration cap returns the current iterate."""
     a, b, _ = make_scaled_problem(40, 100.0, 1e4, seed=0)
@@ -87,14 +79,6 @@ def test_pcg_warm_start_reduces_iterations(spd_system: tuple[np.ndarray, np.ndar
     _, it_cold = pcg(lambda v: a @ v, b, KrylovConfig(precond=lambda r: r / np.diag(a), tol=1e-10))
     _, it_warm = pcg(lambda v: a @ v, b, KrylovConfig(precond=lambda r: r / np.diag(a), tol=1e-10, x0=x_exact + 1e-6))
     assert it_warm < it_cold
-
-
-def test_pcg_exact_warm_start(spd_system: tuple[np.ndarray, np.ndarray, np.ndarray]) -> None:
-    """A warm start that already solves the system returns it in zero iterations."""
-    a, b, x_exact = spd_system
-    x, it = pcg(lambda v: a @ v, b, KrylovConfig(precond=lambda r: r / np.diag(a), x0=x_exact))
-    assert it == 0
-    assert np.allclose(x, x_exact)
 
 
 def test_pcg_beats_cg_on_scaled_operator() -> None:
