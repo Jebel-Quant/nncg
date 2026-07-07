@@ -146,6 +146,53 @@ def kkt_violation(a: SymmetricOperator, b: Vector, x: Vector) -> float:
     )
 
 
+def _init_active_set(n: int, warm: tuple[NDArray[np.bool_], Vector] | None) -> tuple[NDArray[np.bool_], Vector | None]:
+    """Seed the free set and inner warm guess for the outer loop.
+
+    Cold (``warm is None``): everything free (``F = {1..n}``) with no inner
+    guess. Warm: a copy of the previous free mask and the previous iterate as
+    the seed for every subproblem solve.
+    """
+    if warm is None:
+        return np.ones(n, dtype=bool), None  # F = {1..n} initially
+    return warm[0].copy(), warm[1]
+
+
+def _pivot(
+    free: NDArray[np.bool_],
+    prim: NDArray[np.int_],
+    dual: NDArray[np.int_],
+    viol: NDArray[np.int_],
+    n_bar: int,
+    patience: int,
+    p_max: int,
+) -> tuple[int, int, int]:
+    """Apply one working-set pivot, mutating ``free`` in place.
+
+    Takes the fast batch exchange — drop every primal violator ``D``, add every
+    dual violator ``V`` — while the violator count strictly drops below ``n_bar``
+    (patience reset to ``p_max``) or patience remains (decremented). Once patience
+    is exhausted without progress it falls back to a single least-index Bland
+    pivot, the load-bearing anti-cycling guarantee behind finite termination.
+
+    Returns the updated ``(n_bar, patience, fallback_increment)``; the last is 1
+    when the Bland fallback fired, 0 on the batch fast path.
+    """
+    n_viol = viol.size
+    if n_viol < n_bar or patience > 0:  # fast path: progress, or patience remains
+        if n_viol < n_bar:
+            n_bar = n_viol
+            patience = p_max
+        else:
+            patience -= 1
+        free[prim] = False  # batch exchange: drop all D, add all V
+        free[dual] = True
+        return n_bar, patience, 0
+    i_star = int(np.min(viol))  # anti-cycling fallback: single Bland least-index pivot
+    free[i_star] = not free[i_star]
+    return n_bar, patience, 1
+
+
 @dataclass(frozen=True)
 class ActiveSetSolver:
     """The primal-dual active-set outer loop for the non-negative quadratic program.
@@ -328,13 +375,8 @@ class ActiveSetSolver:
         """
         tol, p_max = self.config.tol, self.config.p_max
         max_outer = self.config.max_outer
-        if warm is None:
-            free = np.ones(n, dtype=bool)  # F = {1..n} initially
-            x_guess: Vector | None = None
-        else:
-            free = warm[0].copy()
-            x_guess = warm[1]
-        x = np.zeros(n)
+        free, x_guess = _init_active_set(n, warm)
+        x: Vector = np.zeros(n)
         lam: Vector | None = None
         n_bar = n + 1
         patience = p_max
@@ -363,22 +405,11 @@ class ActiveSetSolver:
             prim = np.flatnonzero(free & (x < -tol))  # D: free but negative
             dual = np.flatnonzero((~free) & (s < -tol))  # V: bound but s < 0
             viol = np.concatenate([prim, dual])
-            n_viol = viol.size
-            if n_viol == 0:
+            if viol.size == 0:
                 break  # KKT satisfied -> unique global minimiser
 
-            if n_viol < n_bar or patience > 0:  # fast path: progress, or patience remains
-                if n_viol < n_bar:
-                    n_bar = n_viol
-                    patience = p_max
-                else:
-                    patience -= 1
-                free[prim] = False  # batch exchange: drop all D, add all V
-                free[dual] = True
-            else:  # anti-cycling fallback: single Bland least-index pivot
-                fallback += 1
-                i_star = int(viol.min())
-                free[i_star] = not free[i_star]
+            n_bar, patience, fired = _pivot(free, prim, dual, viol, n_bar, patience, p_max)
+            fallback += fired
 
         return Result(
             x=x,
