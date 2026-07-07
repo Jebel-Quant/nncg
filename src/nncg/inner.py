@@ -61,12 +61,10 @@ _DEFAULT_NYSTROM = NystromConfig()
 def _free_matvec(op: SymmetricOperator, idx: NDArray[np.int_]) -> MatVec:
     """Return the free-block action ``v -> A[F, F] v`` of the operator.
 
-    The free-set restriction is hoisted out of the inner loop: when the operator
-    provides ``restricted`` (cvx-linalg >= 0.10) the pre-sliced free-block
-    operator is built once here and the returned callable is its plain
-    ``matvec``. Calling ``apply_free(idx, v)`` per CG iteration instead re-gathers
-    the operator's storage on every call, an order of magnitude more wall clock;
-    the fallback keeps older cvx-linalg releases working.
+    The free-set restriction is hoisted out of the inner loop: the pre-sliced
+    free-block operator is built once here and the returned callable is its
+    plain ``matvec``. Restricting per CG iteration instead re-gathers the
+    operator's storage on every call, an order of magnitude more wall clock.
 
     Args:
         op: The symmetric operator ``A``.
@@ -76,13 +74,7 @@ def _free_matvec(op: SymmetricOperator, idx: NDArray[np.int_]) -> MatVec:
         A callable computing ``A[F, F] @ v``; the reduced matrix is never
         materialised.
     """
-    restricted = getattr(op, "restricted", None)
-    if restricted is not None:
-        try:
-            return cast(MatVec, restricted(idx).matvec)
-        except NotImplementedError:
-            pass  # backend without a pre-sliced form; fall back below
-    return lambda v: op.apply_free(idx, v)
+    return cast(MatVec, op.restricted(idx).matvec)
 
 
 def _jacobi(op: SymmetricOperator, idx: NDArray[np.int_] | None = None) -> Preconditioner:

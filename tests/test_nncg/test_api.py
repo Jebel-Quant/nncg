@@ -1,16 +1,21 @@
-"""Tests of the one-call convenience wrappers ``solve_nnqp`` / ``solve_nnqp_eq``.
+"""Tests of the public package surface: the ``solve_nnqp`` / ``solve_nnqp_eq`` wrappers and metadata.
 
-They must be logic-free pass-throughs: the same problem solved through the
-wrapper and through ``ActiveSetSolver`` directly must give an identical
+The wrappers must be logic-free pass-throughs: the same problem solved through
+the wrapper and through ``ActiveSetSolver`` directly must give an identical
 ``Result``. What is tested here is only the wrapping conveniences — array →
 operator, string → inner solver, keyword → ``ActiveSetConfig`` — not the
-mathematics, which the solver's own suite covers.
+mathematics, which the solver's own suite covers. The metadata tests pin the
+package's version fallback and its exported public API.
 """
+
+import importlib
+import importlib.metadata
 
 import numpy as np
 import pytest
 from cvx.linalg import DenseOperator, GramOperator
 
+import nncg
 from nncg import (
     CG,
     ActiveSetConfig,
@@ -102,3 +107,30 @@ def test_solve_nnqp_eq_matches_active_set_solver() -> None:
     assert res.lam is not None
     np.testing.assert_array_equal(res.lam, ref.lam)
     assert np.max(np.abs(res.x - x_star)) < 1e-6
+
+
+def test_version_present() -> None:
+    """The package exposes a version string."""
+    assert isinstance(nncg.__version__, str)
+    assert nncg.__version__
+
+
+def test_version_fallback_without_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without installed package metadata the version falls back to 0.0.0."""
+
+    def raise_not_found(name: str) -> str:
+        raise importlib.metadata.PackageNotFoundError(name)
+
+    monkeypatch.setattr(importlib.metadata, "version", raise_not_found)
+    try:
+        importlib.reload(nncg)
+        assert nncg.__version__ == "0.0.0"
+    finally:
+        monkeypatch.undo()
+        importlib.reload(nncg)  # restore the real version for the other tests
+
+
+def test_public_api_exported() -> None:
+    """Everything in __all__ is importable from the package root."""
+    for name in nncg.__all__:
+        assert hasattr(nncg, name)

@@ -48,9 +48,9 @@ changes are overwritten on the next sync. Repo-owned files are `Makefile`,
   algebra package). Do not add others.
 - The solvers take the quadratic term exclusively as a
   `cvx.linalg.SymmetricOperator` (`DenseOperator` for explicit arrays,
-  `GramOperator` for `A = M'M + ridge I`): `apply_free` drives the in-house
-  CG, `matvec` the reduced gradient, `solve_free` only the `inner="exact"`
-  path. The matrix-free CG/PCG in `krylov.py` stays in-house — it is this
+  `GramOperator` for `A = M'M + ridge I`): `restricted` provides the
+  pre-sliced free block that drives the in-house CG, `matvec` the reduced
+  gradient, `solve_free` only the `inner="exact"` path. The matrix-free CG/PCG in `krylov.py` stays in-house — it is this
   package's core contribution; do not swap it for `bordered_solve` or other
   direct factorisations.
 - All public functions carry full docstrings and type hints (CI gates on

@@ -1,13 +1,21 @@
-"""Tests of the preconditioner builders in :mod:`nncg.inner`."""
+"""Tests of :mod:`nncg.inner`: the free-set matvec factory and preconditioner builders."""
 
 import numpy as np
 import pytest
 from cvx.linalg import DenseOperator
 
-from nncg.inner import NystromConfig, _jacobi, _nystrom
+from nncg.inner import NystromConfig, _free_matvec, _jacobi, _nystrom
 from nncg.krylov import KrylovConfig, pcg
 from tests.problems import make_problem
-from tests.test_operators import _NoDiagOperator
+from tests.test_nncg.test_solver import _NoDiagOperator
+
+
+def _dense_pair(seed: int = 0) -> tuple[DenseOperator, np.ndarray]:
+    """Return a matched ``(DenseOperator, ndarray)`` SPD pair for a given seed."""
+    rng = np.random.default_rng(seed)
+    a = rng.standard_normal((6, 6))
+    a = a @ a.T + np.eye(6)
+    return DenseOperator(a), a
 
 
 def _spd_with_spectrum(eigenvalues: np.ndarray, seed: int) -> np.ndarray:
@@ -15,6 +23,27 @@ def _spd_with_spectrum(eigenvalues: np.ndarray, seed: int) -> np.ndarray:
     rng = np.random.default_rng(seed)
     q = np.linalg.qr(rng.standard_normal((eigenvalues.size, eigenvalues.size)))[0]
     return (q * eigenvalues) @ q.T
+
+
+# --------------------------------------------------------------------------
+# Free-set restriction in the inner matvec factory
+# --------------------------------------------------------------------------
+
+
+def test_free_matvec_uses_restricted() -> None:
+    """The callable is the operator's pre-sliced free-block ``matvec``."""
+    op, a = _dense_pair()
+    idx = np.array([0, 2, 5])
+    mv = _free_matvec(op, idx)
+    v = np.array([1.0, -2.0, 0.5])
+    assert np.allclose(mv(v), a[np.ix_(idx, idx)] @ v)
+    # the hoisted path is the restricted operator's matvec, never re-sliced per call
+    assert mv.__name__ == "matvec"
+
+
+# --------------------------------------------------------------------------
+# Jacobi preconditioner
+# --------------------------------------------------------------------------
 
 
 def test_jacobi_applies_reciprocal_of_diag() -> None:
@@ -52,6 +81,11 @@ def test_jacobi_restricts_to_free_set() -> None:
     idx = np.array([0, 3, 7, 11])
     r = np.arange(1.0, idx.size + 1.0)
     np.testing.assert_allclose(_jacobi(op, idx)(r), r / np.diag(a)[idx])
+
+
+# --------------------------------------------------------------------------
+# Nyström preconditioner
+# --------------------------------------------------------------------------
 
 
 def test_nystrom_solves_spd_system() -> None:
