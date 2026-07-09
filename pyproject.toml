@@ -34,11 +34,15 @@ test = [
     "pytest>=7.0",
     "pytest-timeout>=2.3",
 ]
-lint = []
+lint = [
+    "ty",  # `make typecheck` runs `uv run ty check`; not provisioned by the synced target
+    "mypy",  # `make typecheck` also runs `uv run mypy --strict`
+]
 
-# make a fresh `uv run pytest` work without knowing about dependency groups
+# make a fresh `uv run pytest`/`uv run ty check` work without knowing about
+# dependency groups (the synced typecheck target does not pass --with/--group)
 [tool.uv]
-default-groups = ["dev", "test"]
+default-groups = ["dev", "test", "lint"]
 
 [build-system]
 requires = ["hatchling"]
