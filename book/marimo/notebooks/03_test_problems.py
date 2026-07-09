@@ -363,7 +363,7 @@ def _(mo):
         runs at the *core's* condition number regardless of the spread.
 
         `solve_nnqp` selects the inner solver with `inner="cg"` (default) or
-        `inner="pcg"`. The sweep below contrasts their inner iteration counts as the
+        `inner="jacobi"`. The sweep below contrasts their inner iteration counts as the
         diagonal spread grows.
         """
     )
@@ -378,11 +378,11 @@ def _(DenseOperator, make_scaled_problem, np, plt, solve_nnqp):
         _a, _b, _x = make_scaled_problem(n=80, kappa_core=1e2, spread=float(_sp), seed=4)
         _op = DenseOperator(_a)
         cg_it.append(solve_nnqp(_op, _b, inner="cg").inner)
-        pcg_it.append(solve_nnqp(_op, _b, inner="pcg").inner)
+        pcg_it.append(solve_nnqp(_op, _b, inner="jacobi").inner)
 
     _fig, _ax = plt.subplots(figsize=(8, 4))
     _ax.loglog(spreads, cg_it, "o-", color="#0b7d55", label='inner="cg"')
-    _ax.loglog(spreads, pcg_it, "s-", color="#11D48E", label='inner="pcg" (Jacobi)')
+    _ax.loglog(spreads, pcg_it, "s-", color="#11D48E", label='inner="jacobi"')
     _ax.set_xlabel(r"diagonal spread of $D$")
     _ax.set_ylabel("total inner iterations")
     _ax.set_title("Jacobi PCG is immune to diagonal scaling")
@@ -397,7 +397,7 @@ def _(mo):
     mo.md(
         r"""
         Plain CG's iteration count climbs with the spread; Jacobi-PCG stays flat at
-        the core's cost. This is the numerical evidence behind the `inner="pcg"`
+        the core's cost. This is the numerical evidence behind the `inner="jacobi"`
         option and the `GramOperator`/`diag` machinery.
 
         ### Recap
