@@ -109,6 +109,97 @@ def _jacobi(op: SymmetricOperator, idx: NDArray[np.int_] | None = None) -> Preco
     return lambda r: dinv * r
 
 
+def _nystrom_sketch(
+    matvec: MatVec, n: int, sketch: int, seed: int | None
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Build the randomized Nyström eigendecomposition of the operator.
+
+    Draws an ``n x sketch`` orthonormal test matrix, forms ``Y = A Omega`` with
+    ``sketch`` matrix-free products, and applies the Frangella-Tropp-Udell
+    stabilised sketch (Alg. 2.1): a nugget shift lifts ``Y`` off the range
+    boundary so the small Cholesky is well conditioned, then a thin SVD yields
+    the orthonormal basis and the nugget-corrected, clipped eigenvalues.
+
+    Args:
+        matvec: The matrix-free action ``v -> A v`` (already free-block sliced).
+        n: Dimension of the (free-block) operator.
+        sketch: Number of test columns (``rank + oversample``, clamped to ``n``).
+        seed: Seed for the Gaussian test matrix (``None`` draws a fresh one).
+
+    Returns:
+        ``(u_full, lam_full)``: the orthonormal basis and eigenvalues in
+        descending order, before truncation to the requested rank.
+    """
+    rng = np.random.default_rng(seed)
+    omega = np.linalg.qr(rng.standard_normal((n, sketch)))[0]  # n x sketch, orthonormal
+    y = np.column_stack([matvec(omega[:, j]) for j in range(sketch)])  # A_F @ Omega
+
+    # Stabilising shift (Frangella-Tropp-Udell Alg. 2.1): lift Y off the range
+    # boundary so the small Cholesky is well conditioned, then subtract it back.
+    nu = np.sqrt(n) * np.finfo(np.float64).eps * float(np.linalg.norm(y, ord=2))
+    y_nu = y + nu * omega
+    chol = np.linalg.cholesky(omega.T @ y_nu)  # lower, chol @ chol.T = Omega^T Y_nu
+    b = np.linalg.solve(chol, y_nu.T).T  # B = Y_nu chol^{-T}, so B B^T = Y_nu (Omega^T Y_nu)^{-1} Y_nu^T
+    u_full, sv, _ = np.linalg.svd(b, full_matrices=False)
+    lam_full = np.maximum(sv**2 - nu, 0.0)  # eigenvalues of the Nystrom approximation
+    return u_full, lam_full
+
+
+def _check_captured(lam: NDArray[np.float64], rank: int) -> None:
+    """Validate that the rank-``rank`` sketch captured a genuine eigenspace.
+
+    The smallest captured eigenvalue must be a real positive eigenvalue, not
+    floating-point noise from a rank the block does not possess.
+
+    Args:
+        lam: The captured eigenvalues in descending order.
+        rank: The requested sketch rank (for the error message).
+
+    Raises:
+        ValueError: When the smallest captured eigenvalue is non-positive or
+            negligible relative to the largest — ``rank`` exceeds the numerical
+            rank of the block, so reduce it.
+    """
+    if float(lam[0]) <= 0.0 or float(lam[-1]) <= 1e-12 * float(lam[0]):
+        ratio = float(lam[-1]) / float(lam[0]) if float(lam[0]) > 0.0 else 0.0
+        msg = (
+            f"the rank-{rank} Nystrom sketch captured a negligible eigenvalue "
+            f"(lam_min/lam_max={ratio:.2e}); rank exceeds the numerical rank of A — reduce it"
+        )
+        raise ValueError(msg)
+
+
+def _nystrom_shift(shift: float | None, lam: NDArray[np.float64], lam_full: NDArray[np.float64], rank: int) -> float:
+    """Choose the scalar deflation shift ``mu`` for the uncaptured spectral tail.
+
+    Uses an explicit ``shift`` when given; otherwise the largest *uncaptured*
+    eigenvalue (deflation), falling back to the smallest captured one when the
+    sketch spanned the whole spectrum (``oversample=0``).
+
+    Args:
+        shift: Explicit shift, or ``None`` for the default deflation choice.
+        lam: The captured eigenvalues in descending order.
+        lam_full: All sketched eigenvalues (captured plus tail) in descending order.
+        rank: The requested sketch rank.
+
+    Returns:
+        The positive scalar shift ``mu``.
+
+    Raises:
+        ValueError: When the resolved shift is not positive.
+    """
+    if shift is not None:
+        mu = float(shift)
+    elif lam_full.size > rank and float(lam_full[rank]) > 1e-12 * float(lam[0]):
+        mu = float(lam_full[rank])  # largest uncaptured eigenvalue: the deflation shift
+    else:
+        mu = float(lam[-1])  # sketch captured the whole spectrum: fall back to smallest captured
+    if mu <= 0.0:
+        msg = f"shift must be positive; got {mu:.2e}"
+        raise ValueError(msg)
+    return mu
+
+
 def _nystrom(
     op: SymmetricOperator, idx: NDArray[np.int_] | None = None, config: NystromConfig = _DEFAULT_NYSTROM
 ) -> Preconditioner:
@@ -147,39 +238,11 @@ def _nystrom(
     rank = min(rank, n)
     sketch = min(rank + max(oversample, 0), n)
 
-    rng = np.random.default_rng(seed)
-    omega = np.linalg.qr(rng.standard_normal((n, sketch)))[0]  # n x sketch, orthonormal
-    y = np.column_stack([matvec(omega[:, j]) for j in range(sketch)])  # A_F @ Omega
-
-    # Stabilising shift (Frangella-Tropp-Udell Alg. 2.1): lift Y off the range
-    # boundary so the small Cholesky is well conditioned, then subtract it back.
-    nu = np.sqrt(n) * np.finfo(np.float64).eps * float(np.linalg.norm(y, ord=2))
-    y_nu = y + nu * omega
-    chol = np.linalg.cholesky(omega.T @ y_nu)  # lower, chol @ chol.T = Omega^T Y_nu
-    b = np.linalg.solve(chol, y_nu.T).T  # B = Y_nu chol^{-T}, so B B^T = Y_nu (Omega^T Y_nu)^{-1} Y_nu^T
-    u_full, sv, _ = np.linalg.svd(b, full_matrices=False)
-    lam_full = np.maximum(sv**2 - nu, 0.0)  # eigenvalues of the Nystrom approximation
-
+    u_full, lam_full = _nystrom_sketch(matvec, n, sketch, seed)
     u = u_full[:, :rank]
     lam = lam_full[:rank]
-    # The smallest captured eigenvalue must be a genuine positive eigenvalue,
-    # not floating-point noise from a rank the block does not have.
-    if float(lam[0]) <= 0.0 or float(lam[-1]) <= 1e-12 * float(lam[0]):
-        ratio = float(lam[-1]) / float(lam[0]) if float(lam[0]) > 0.0 else 0.0
-        msg = (
-            f"the rank-{rank} Nystrom sketch captured a negligible eigenvalue "
-            f"(lam_min/lam_max={ratio:.2e}); rank exceeds the numerical rank of A — reduce it"
-        )
-        raise ValueError(msg)
-    if shift is not None:
-        mu = float(shift)
-    elif lam_full.size > rank and float(lam_full[rank]) > 1e-12 * float(lam[0]):
-        mu = float(lam_full[rank])  # largest uncaptured eigenvalue: the deflation shift
-    else:
-        mu = float(lam[-1])  # sketch captured the whole spectrum: fall back to smallest captured
-    if mu <= 0.0:
-        msg = f"shift must be positive; got {mu:.2e}"
-        raise ValueError(msg)
+    _check_captured(lam, rank)
+    mu = _nystrom_shift(shift, lam, lam_full, rank)
 
     inv_mu = 1.0 / mu
     coef = 1.0 / lam - inv_mu  # low-rank correction weights; <= 0 for the default shift

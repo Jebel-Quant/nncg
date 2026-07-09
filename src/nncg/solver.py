@@ -22,6 +22,7 @@ ridge)`` for ``A = M^T M + ridge I`` so the ``n x n`` matrix is never formed.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -156,6 +157,21 @@ def _init_active_set(n: int, warm: tuple[NDArray[np.bool_], Vector] | None) -> t
     if warm is None:
         return np.ones(n, dtype=bool), None  # F = {1..n} initially
     return warm[0].copy(), warm[1]
+
+
+def _violators(
+    free: NDArray[np.bool_], x: Vector, s: Vector, tol: float
+) -> tuple[NDArray[np.int_], NDArray[np.int_], NDArray[np.int_]]:
+    """Split the KKT violators at tolerance ``tol`` into primal and dual sets.
+
+    Returns ``(prim, dual, viol)``: ``prim`` (set ``D``) are free indices whose
+    primal value went negative, ``dual`` (set ``V``) are bound indices whose
+    reduced gradient went negative, and ``viol`` is their concatenation. An empty
+    ``viol`` certifies the KKT conditions at the unique global minimiser.
+    """
+    prim = np.flatnonzero(free & (x < -tol))  # D: free but negative
+    dual = np.flatnonzero((~free) & (s < -tol))  # V: bound but s < 0
+    return prim, dual, np.concatenate([prim, dual])
 
 
 def _pivot(
@@ -374,42 +390,26 @@ class ActiveSetSolver:
             A :class:`Result`; ``lam`` is whatever the last subproblem returned.
         """
         tol, p_max = self.config.tol, self.config.p_max
-        max_outer = self.config.max_outer
-        free, x_guess = _init_active_set(n, warm)
+        free, x_guess, traj, cap = self._init_run_state(n, warm)
         x: Vector = np.zeros(n)
         lam: Vector | None = None
-        n_bar = n + 1
-        patience = p_max
+        n_bar, patience = n + 1, p_max
         outer = inner_total = fallback = 0
-        traj: list[tuple[int, ...]] | None = [] if self.config.track else None
         converged = True
 
-        while True:
-            if max_outer is not None and outer >= max_outer:
-                converged = False
-                break
-            idx = np.flatnonzero(free)
-            if traj is not None:
-                traj.append(tuple(idx.tolist()))
-            x0 = x_guess[idx] if x_guess is not None else None
-            xf, lam, k_step = sub_solve(idx, x0)
+        while outer < cap:
+            x, lam, k_step = self._solve_free_set(free, n, sub_solve, x_guess, traj)
             outer += 1
             inner_total += k_step
-
-            x = np.zeros(n)
-            x[idx] = xf
             if x_guess is not None:
                 x_guess = x  # warm mode: newest iterate seeds the next reduced solve
-            s = reduced_gradient(x, lam)
-
-            prim = np.flatnonzero(free & (x < -tol))  # D: free but negative
-            dual = np.flatnonzero((~free) & (s < -tol))  # V: bound but s < 0
-            viol = np.concatenate([prim, dual])
+            prim, dual, viol = _violators(free, x, reduced_gradient(x, lam), tol)
             if viol.size == 0:
                 break  # KKT satisfied -> unique global minimiser
-
             n_bar, patience, fired = _pivot(free, prim, dual, viol, n_bar, patience, p_max)
             fallback += fired
+        else:
+            converged = False  # outer cap reached without certifying KKT
 
         return Result(
             x=x,
@@ -421,3 +421,58 @@ class ActiveSetSolver:
             lam=lam,
             traj=traj,
         )
+
+    def _init_run_state(
+        self, n: int, warm: tuple[NDArray[np.bool_], Vector] | None
+    ) -> tuple[NDArray[np.bool_], Vector | None, list[tuple[int, ...]] | None, float]:
+        """Seed the free set, inner guess, trajectory log and outer-iteration cap.
+
+        Delegates the free set and warm inner guess to :func:`_init_active_set`,
+        allocates the trajectory list only when ``config.track`` is set, and
+        resolves ``config.max_outer`` (``None`` for uncapped) into a numeric
+        loop bound so the driver's ``while`` condition stays branch-free.
+
+        Returns:
+            ``(free, x_guess, traj, cap)``: the initial free mask, the inner warm
+            guess (``None`` on a cold start), the trajectory list (or ``None``),
+            and the outer-iteration cap (``math.inf`` when uncapped).
+        """
+        free, x_guess = _init_active_set(n, warm)
+        traj: list[tuple[int, ...]] | None = [] if self.config.track else None
+        cap = math.inf if self.config.max_outer is None else self.config.max_outer
+        return free, x_guess, traj, cap
+
+    def _solve_free_set(
+        self,
+        free: NDArray[np.bool_],
+        n: int,
+        sub_solve: SubSolve,
+        x_guess: Vector | None,
+        traj: list[tuple[int, ...]] | None,
+    ) -> tuple[Vector, Vector | None, int]:
+        """Solve the subproblem on the current free set and scatter it into ``R^n``.
+
+        Records the free set on ``traj`` when tracking, seeds the inner solve
+        from ``x_guess`` restricted to the free set (cold when ``None``), and
+        places the returned free-block solution back into a full zero vector.
+
+        Args:
+            free: Boolean free-set mask over the ``n`` variables.
+            n: Problem dimension.
+            sub_solve: Subproblem callback ``(idx, x0) -> (x_F, lam, inner_iters)``.
+            x_guess: Inner warm guess over all variables, or ``None`` (cold).
+            traj: Trajectory list to append the free set to, or ``None``.
+
+        Returns:
+            ``(x, lam, inner_iters)``: the full-length iterate, the equality
+            multipliers (``None`` for the bound-only problem), and the inner
+            iteration count from the callback.
+        """
+        idx = np.flatnonzero(free)
+        if traj is not None:
+            traj.append(tuple(idx.tolist()))
+        x0 = x_guess[idx] if x_guess is not None else None
+        xf, lam, k_step = sub_solve(idx, x0)
+        x: Vector = np.zeros(n)
+        x[idx] = xf
+        return x, lam, k_step
