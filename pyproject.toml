@@ -35,8 +35,8 @@ test = [
     "pytest-timeout>=2.3",
 ]
 lint = [
-    "ty",  # `make typecheck` runs `uv run ty check`; not provisioned by the synced target
-    "mypy",  # `make typecheck` also runs `uv run mypy --strict`
+    "ty>=0.0.1",  # `make typecheck` runs `uv run ty check`; not provisioned by the synced target
+    "mypy>=1.8",  # `make typecheck` also runs `uv run mypy --strict`; lower bound avoids lowest-direct pulling mypy 0.x (py2-only deps)
 ]
 
 # make a fresh `uv run pytest`/`uv run ty check` work without knowing about
