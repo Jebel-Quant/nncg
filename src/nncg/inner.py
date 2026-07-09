@@ -272,6 +272,21 @@ def _pcg_block(
     return pcg(_free_matvec(op, idx), rhs, replace(krylov, precond=precond, x0=x0))
 
 
+def _same_free_block(
+    checked_op: SymmetricOperator | None,
+    checked_idx: NDArray[np.int_] | None,
+    op: SymmetricOperator,
+    idx: NDArray[np.int_],
+) -> bool:
+    """Return whether ``(op, idx)`` is the memoised free block already verified.
+
+    Keyed on operator *identity* (not equality) so the memo can never carry a
+    stale verdict across operators; ``checked_idx is None`` means nothing has
+    been verified yet.
+    """
+    return checked_op is op and checked_idx is not None and np.array_equal(checked_idx, idx)
+
+
 @dataclass(frozen=True)
 class Exact:
     """Direct free-block solve via ``op.solve_free`` (one "iteration" per solve).
@@ -309,9 +324,7 @@ class Exact:
 
     def solve(self, op: SymmetricOperator, idx: NDArray[np.int_], rhs: Vector, x0: Vector | None) -> tuple[Vector, int]:  # noqa: ARG002
         """Solve the free block ``A[F, F] y = rhs`` directly, guarding its conditioning once per free set."""
-        if self.check_conditioning and (
-            self._checked_op is not op or self._checked_idx is None or not np.array_equal(self._checked_idx, idx)
-        ):
+        if self.check_conditioning and not _same_free_block(self._checked_op, self._checked_idx, op, idx):
             rcond = op.rcond_free(idx)
             if rcond < _RCOND_MIN:
                 msg = f"free block of size {idx.size} is numerically singular (rcond={rcond:.2e})"
