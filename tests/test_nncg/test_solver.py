@@ -160,11 +160,21 @@ def test_nystrom_inner_matches_cg_trajectory() -> None:
 
 
 def test_max_outer_cap_reports_nonconvergence() -> None:
-    """An outer-step cap stops the loop with converged=False."""
+    """An outer-step cap stops the loop at exactly the cap with converged=False.
+
+    The uncapped outer count is read off the public ``Result`` rather than
+    hard-coded; every cap short of it must truncate the loop to exactly ``cap``
+    steps and report non-convergence — the ``max_outer`` contract, robust to
+    backend-dependent iteration-count drift.
+    """
     a, b, _, _ = make_problem(60, 1e3, seed=0)
-    res = ActiveSetSolver(inner=CG(), config=ActiveSetConfig(max_outer=1)).solve(DenseOperator(a), b)
-    assert not res.converged
-    assert res.outer == 1
+    op = DenseOperator(a)
+    full = ActiveSetSolver(inner=CG()).solve(op, b).outer  # uncapped step count
+    assert full > 1  # a non-trivial support needs more than one step to reach
+    for cap in range(1, full):
+        res = ActiveSetSolver(inner=CG(), config=ActiveSetConfig(max_outer=cap)).solve(op, b)
+        assert not res.converged
+        assert res.outer == cap  # stopped at exactly the configured cap
 
 
 def test_warm_start_support_stable_single_step() -> None:
@@ -556,11 +566,21 @@ def test_eq_track_records_trajectory() -> None:
 
 
 def test_eq_max_outer_caps_the_loop() -> None:
-    """``max_outer`` stops the loop early and reports non-convergence."""
+    """``max_outer`` stops the eq loop at exactly the cap and reports non-convergence.
+
+    As in the bound-constrained case, the uncapped step count is measured from
+    the public ``Result`` and every shorter cap must truncate the loop to
+    exactly ``cap`` steps — the ``max_outer`` contract rather than a hard-coded
+    count.
+    """
     a, b, b_eq, c_eq, _, _, _ = make_eq_problem(80, 1e5, 3, seed=9)
-    res = ActiveSetSolver(inner=CG(), config=ActiveSetConfig(max_outer=1)).solve_eq(DenseOperator(a), b, b_eq, c_eq)
-    assert not res.converged
-    assert res.outer == 1
+    op = DenseOperator(a)
+    full = ActiveSetSolver(inner=CG()).solve_eq(op, b, b_eq, c_eq).outer  # uncapped step count
+    assert full > 1
+    for cap in range(1, full):
+        res = ActiveSetSolver(inner=CG(), config=ActiveSetConfig(max_outer=cap)).solve_eq(op, b, b_eq, c_eq)
+        assert not res.converged
+        assert res.outer == cap  # stopped at exactly the configured cap
 
 
 def test_eq_reduced_gradient_certifies() -> None:
