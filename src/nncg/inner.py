@@ -287,6 +287,14 @@ def _same_free_block(
     return checked_op is op and checked_idx is not None and np.array_equal(checked_idx, idx)
 
 
+def _raise_if_singular(op: SymmetricOperator, idx: NDArray[np.int_]) -> None:
+    """Raise if the free block ``A[F, F]`` is numerically singular (``rcond_free < _RCOND_MIN``)."""
+    rcond = op.rcond_free(idx)
+    if rcond < _RCOND_MIN:
+        msg = f"free block of size {idx.size} is numerically singular (rcond={rcond:.2e})"
+        raise ValueError(msg)
+
+
 @dataclass(frozen=True)
 class Exact:
     """Direct free-block solve via ``op.solve_free`` (one "iteration" per solve).
@@ -325,10 +333,7 @@ class Exact:
     def solve(self, op: SymmetricOperator, idx: NDArray[np.int_], rhs: Vector, x0: Vector | None) -> tuple[Vector, int]:  # noqa: ARG002
         """Solve the free block ``A[F, F] y = rhs`` directly, guarding its conditioning once per free set."""
         if self.check_conditioning and not _same_free_block(self._checked_op, self._checked_idx, op, idx):
-            rcond = op.rcond_free(idx)
-            if rcond < _RCOND_MIN:
-                msg = f"free block of size {idx.size} is numerically singular (rcond={rcond:.2e})"
-                raise ValueError(msg)
+            _raise_if_singular(op, idx)
             object.__setattr__(self, "_checked_op", op)
             object.__setattr__(self, "_checked_idx", idx)
         return op.solve_free(idx, rhs), 1

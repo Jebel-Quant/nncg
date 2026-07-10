@@ -53,6 +53,23 @@ class KrylovConfig:
 #: Shared default so ``KrylovConfig()`` is not called in argument defaults (ruff B008).
 _DEFAULT_KRYLOV = KrylovConfig()
 
+#: The identity preconditioner: ``M^{-1} = I`` turns PCG back into plain CG.
+_IDENTITY: Preconditioner = lambda r: r  # noqa: E731
+
+
+def _resolve_precond(precond: Preconditioner | None) -> Preconditioner:
+    """Return the preconditioner action, substituting the identity for ``None``."""
+    return _IDENTITY if precond is None else precond
+
+
+def _pcg_start(matvec: MatVec, rhs: Vector, x0: Vector | None) -> tuple[Vector, Vector]:
+    """Initial iterate and residual: a zero start, or ``(x0, b - A x0)`` for a warm start."""
+    if x0 is None:
+        return np.zeros_like(rhs), rhs.copy()
+    x = x0.astype(np.float64, copy=True)
+    return x, rhs - matvec(x)
+
+
 # Why in-house rather than scipy.sparse.linalg.cg? scipy's CG is matrix-free
 # and preconditionable too, so functionally it could stand in here. We keep our
 # own for four reasons: (1) the matrix-free PCG is this package's core
@@ -89,21 +106,15 @@ def pcg(
     Returns:
         The approximate solution and the number of iterations taken.
     """
-    precond, tol, maxit, x0 = config.precond, config.tol, config.maxit, config.x0
-    if precond is None:
-        precond = lambda r: r  # noqa: E731 -- identity preconditioner; PCG becomes plain CG
-    if x0 is None:
-        x = np.zeros_like(rhs)
-        r = rhs.copy()
-    else:
-        x = x0.astype(np.float64, copy=True)
-        r = rhs - matvec(x)
-    z = precond(r)
-    p = z.copy()
-    rz = float(r @ z)
+    precond = _resolve_precond(config.precond)
+    tol, maxit = config.tol, config.maxit
     bnorm = float(np.linalg.norm(rhs))
     if bnorm == 0.0:
         return np.zeros_like(rhs), 0
+    x, r = _pcg_start(matvec, rhs, config.x0)
+    z = precond(r)
+    p = z.copy()
+    rz = float(r @ z)
     # A warm start that already solves the system to tolerance leaves r == 0,
     # so p == 0 and the search-direction curvature p @ ap vanishes; returning
     # here avoids the 0/0 in the alpha step and reports zero iterations.
