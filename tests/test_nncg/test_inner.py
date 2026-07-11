@@ -1,11 +1,11 @@
-"""Tests of :mod:`nncg.inner`: the free-set matvec factory and preconditioner builders."""
+"""Tests of :mod:`nncg.preconditioners`: the free-block matvec factory and preconditioner builders."""
 
 import numpy as np
 import pytest
 from cvx.linalg import DenseOperator
 
-from nncg.inner import NystromConfig, _free_matvec, _jacobi, _nystrom
 from nncg.krylov import KrylovConfig, pcg
+from nncg.preconditioners import NystromConfig, _free_matvec, _jacobi, _nystrom
 from tests.problems import make_problem
 from tests.test_nncg.test_solver import _NoDiagOperator
 
