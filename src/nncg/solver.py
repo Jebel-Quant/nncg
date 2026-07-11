@@ -22,20 +22,16 @@ ridge)`` for ``A = M^T M + ridge I`` so the ``n x n`` matrix is never formed.
 
 from __future__ import annotations
 
-import math
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol
 
 import numpy as np
-from cvx.linalg import Matrix, SymmetricOperator, Vector, cholesky_solve
+from cvx.linalg import Matrix, SymmetricOperator, Vector
 from numpy.typing import NDArray
 
-SubSolve = Callable[[NDArray[np.int_], "Vector | None"], "tuple[Vector, Vector | None, int]"]
-"""Subproblem solve on a free set: ``(idx, x0) -> (x_F, lam, inner_iters)``."""
-
-ReducedGradient = Callable[["Vector", "Vector | None"], "Vector"]
-"""Reduced gradient of the subproblem: ``(x, lam) -> s``."""
+from ._active_set import ReducedGradient, SubSolve, _drive
+from ._equality import _saddle_solve
+from .certificate import _require_operator
 
 
 class InnerSolver(Protocol):
@@ -84,12 +80,6 @@ class ActiveSetConfig:
     max_outer: int | None = None
 
 
-_NEEDS_OPERATOR = (
-    "the quadratic term must be a cvx.linalg.SymmetricOperator: wrap a dense SPD "
-    "array in DenseOperator(a), or pass GramOperator(M, ridge) for A = M'M + ridge*I"
-)
-
-
 @dataclass(frozen=True)
 class Result:
     """Outcome of an active-set solve.
@@ -117,96 +107,6 @@ class Result:
     free: NDArray[np.bool_]
     lam: Vector | None = None
     traj: list[tuple[int, ...]] | None = None
-
-
-def kkt_violation(a: SymmetricOperator, b: Vector, x: Vector) -> float:
-    """Maximum violation of the KKT system of ``min_{x>=0} 1/2 x'Ax - b'x``.
-
-    Args:
-        a: The SPD operator ``A`` (a :class:`cvx.linalg.SymmetricOperator`).
-        b: The linear term ``b``.
-        x: Candidate solution.
-
-    Returns:
-        ``max`` of the negativity violations of ``x`` and of the reduced
-        gradient ``s = A x - b``, and of the complementarity products
-        ``|x_i s_i|``. Zero certifies the unique global minimiser.
-    """
-    if not isinstance(a, SymmetricOperator):
-        raise TypeError(_NEEDS_OPERATOR)
-    if a.n != len(b):
-        msg = f"operator dimension {a.n} does not match len(b) = {len(b)}"
-        raise ValueError(msg)
-    s = a.matvec(x) - b
-    return float(
-        max(
-            np.max(-x, initial=0.0),
-            np.max(-s, initial=0.0),
-            np.max(np.abs(x * s), initial=0.0),
-        )
-    )
-
-
-def _init_active_set(n: int, warm: tuple[NDArray[np.bool_], Vector] | None) -> tuple[NDArray[np.bool_], Vector | None]:
-    """Seed the free set and inner warm guess for the outer loop.
-
-    Cold (``warm is None``): everything free (``F = {1..n}``) with no inner
-    guess. Warm: a copy of the previous free mask and the previous iterate as
-    the seed for every subproblem solve.
-    """
-    if warm is None:
-        return np.ones(n, dtype=bool), None  # F = {1..n} initially
-    return warm[0].copy(), warm[1]
-
-
-def _violators(
-    free: NDArray[np.bool_], x: Vector, s: Vector, tol: float
-) -> tuple[NDArray[np.int_], NDArray[np.int_], NDArray[np.int_]]:
-    """Split the KKT violators at tolerance ``tol`` into primal and dual sets.
-
-    Returns ``(prim, dual, viol)``: ``prim`` (set ``D``) are free indices whose
-    primal value went negative, ``dual`` (set ``V``) are bound indices whose
-    reduced gradient went negative, and ``viol`` is their concatenation. An empty
-    ``viol`` certifies the KKT conditions at the unique global minimiser.
-    """
-    prim = np.flatnonzero(free & (x < -tol))  # D: free but negative
-    dual = np.flatnonzero((~free) & (s < -tol))  # V: bound but s < 0
-    return prim, dual, np.concatenate([prim, dual])
-
-
-def _pivot(
-    free: NDArray[np.bool_],
-    prim: NDArray[np.int_],
-    dual: NDArray[np.int_],
-    viol: NDArray[np.int_],
-    n_bar: int,
-    patience: int,
-    p_max: int,
-) -> tuple[int, int, int]:
-    """Apply one working-set pivot, mutating ``free`` in place.
-
-    Takes the fast batch exchange — drop every primal violator ``D``, add every
-    dual violator ``V`` — while the violator count strictly drops below ``n_bar``
-    (patience reset to ``p_max``) or patience remains (decremented). Once patience
-    is exhausted without progress it falls back to a single least-index Bland
-    pivot, the load-bearing anti-cycling guarantee behind finite termination.
-
-    Returns the updated ``(n_bar, patience, fallback_increment)``; the last is 1
-    when the Bland fallback fired, 0 on the batch fast path.
-    """
-    n_viol = viol.size
-    if n_viol < n_bar or patience > 0:  # fast path: progress, or patience remains
-        if n_viol < n_bar:
-            n_bar = n_viol
-            patience = p_max
-        else:
-            patience -= 1
-        free[prim] = False  # batch exchange: drop all D, add all V
-        free[dual] = True
-        return n_bar, patience, 0
-    i_star = int(np.min(viol))  # anti-cycling fallback: single Bland least-index pivot
-    free[i_star] = not free[i_star]
-    return n_bar, patience, 1
 
 
 @dataclass(frozen=True)
@@ -268,11 +168,7 @@ class ActiveSetSolver:
                 (:class:`nncg.inner.Jacobi`) meets a backend without ``diag``
                 (propagated from ``cvx.linalg``).
         """
-        if not isinstance(a, SymmetricOperator):
-            raise TypeError(_NEEDS_OPERATOR)
-        if a.n != len(b):
-            msg = f"operator dimension {a.n} does not match len(b) = {len(b)}"
-            raise ValueError(msg)
+        _require_operator(a, b)
 
         def sub_solve(idx: NDArray[np.int_], x0: Vector | None) -> tuple[Vector, Vector | None, int]:
             """Solve the reduced system ``A_F x_F = b_F`` with the chosen inner solver."""
@@ -328,26 +224,11 @@ class ActiveSetSolver:
                 (:class:`nncg.inner.Jacobi`) meets a backend without ``diag``
                 (propagated from ``cvx.linalg``).
         """
-        if not isinstance(a, SymmetricOperator):
-            raise TypeError(_NEEDS_OPERATOR)
-        if a.n != len(b):
-            msg = f"operator dimension {a.n} does not match len(b) = {len(b)}"
-            raise ValueError(msg)
-        p = b_eq.shape[0]
+        _require_operator(a, b)
 
         def sub_solve(idx: NDArray[np.int_], x0: Vector | None) -> tuple[Vector, Vector | None, int]:
             """Solve the saddle system on the free set via the p-by-p Schur complement."""
-            b_f = b_eq[:, idx]
-            v0, k0 = self.inner.solve(a, idx, b[idx], x0)
-            v1 = np.zeros((idx.size, p))
-            k_cols = 0
-            for j in range(p):
-                v1[:, j], kj = self.inner.solve(a, idx, b_f[j], None)
-                k_cols += kj
-            schur = b_f @ v1  # p-by-p Schur complement, SPD
-            lam = cholesky_solve(schur, c_eq - b_f @ v0)
-            xf = v0 + v1 @ lam  # x_F = A_F^{-1}(b_F + B_F^T lambda)
-            return xf, lam, k0 + k_cols
+            return _saddle_solve(self.inner, a, b, b_eq, c_eq, idx, x0)
 
         def reduced_gradient(x: Vector, lam: Vector | None) -> Vector:
             """Return the constrained reduced gradient ``s = A x - b - B^T lam``."""
@@ -389,28 +270,10 @@ class ActiveSetSolver:
         Returns:
             A :class:`Result`; ``lam`` is whatever the last subproblem returned.
         """
-        tol, p_max = self.config.tol, self.config.p_max
-        free, x_guess, traj, cap = self._init_run_state(n, warm)
-        x: Vector = np.zeros(n)
-        lam: Vector | None = None
-        n_bar, patience = n + 1, p_max
-        outer = inner_total = fallback = 0
-        converged = True
-
-        while outer < cap:
-            x, lam, k_step = self._solve_free_set(free, n, sub_solve, x_guess, traj)
-            outer += 1
-            inner_total += k_step
-            if x_guess is not None:
-                x_guess = x  # warm mode: newest iterate seeds the next reduced solve
-            prim, dual, viol = _violators(free, x, reduced_gradient(x, lam), tol)
-            if viol.size == 0:
-                break  # KKT satisfied -> unique global minimiser
-            n_bar, patience, fired = _pivot(free, prim, dual, viol, n_bar, patience, p_max)
-            fallback += fired
-        else:
-            converged = False  # outer cap reached without certifying KKT
-
+        cfg = self.config
+        x, outer, inner_total, fallback, converged, free, lam, traj = _drive(
+            cfg.tol, cfg.p_max, cfg.track, cfg.max_outer, n, sub_solve, reduced_gradient, warm
+        )
         return Result(
             x=x,
             outer=outer,
@@ -421,58 +284,3 @@ class ActiveSetSolver:
             lam=lam,
             traj=traj,
         )
-
-    def _init_run_state(
-        self, n: int, warm: tuple[NDArray[np.bool_], Vector] | None
-    ) -> tuple[NDArray[np.bool_], Vector | None, list[tuple[int, ...]] | None, float]:
-        """Seed the free set, inner guess, trajectory log and outer-iteration cap.
-
-        Delegates the free set and warm inner guess to :func:`_init_active_set`,
-        allocates the trajectory list only when ``config.track`` is set, and
-        resolves ``config.max_outer`` (``None`` for uncapped) into a numeric
-        loop bound so the driver's ``while`` condition stays branch-free.
-
-        Returns:
-            ``(free, x_guess, traj, cap)``: the initial free mask, the inner warm
-            guess (``None`` on a cold start), the trajectory list (or ``None``),
-            and the outer-iteration cap (``math.inf`` when uncapped).
-        """
-        free, x_guess = _init_active_set(n, warm)
-        traj: list[tuple[int, ...]] | None = [] if self.config.track else None
-        cap = math.inf if self.config.max_outer is None else self.config.max_outer
-        return free, x_guess, traj, cap
-
-    def _solve_free_set(
-        self,
-        free: NDArray[np.bool_],
-        n: int,
-        sub_solve: SubSolve,
-        x_guess: Vector | None,
-        traj: list[tuple[int, ...]] | None,
-    ) -> tuple[Vector, Vector | None, int]:
-        """Solve the subproblem on the current free set and scatter it into ``R^n``.
-
-        Records the free set on ``traj`` when tracking, seeds the inner solve
-        from ``x_guess`` restricted to the free set (cold when ``None``), and
-        places the returned free-block solution back into a full zero vector.
-
-        Args:
-            free: Boolean free-set mask over the ``n`` variables.
-            n: Problem dimension.
-            sub_solve: Subproblem callback ``(idx, x0) -> (x_F, lam, inner_iters)``.
-            x_guess: Inner warm guess over all variables, or ``None`` (cold).
-            traj: Trajectory list to append the free set to, or ``None``.
-
-        Returns:
-            ``(x, lam, inner_iters)``: the full-length iterate, the equality
-            multipliers (``None`` for the bound-only problem), and the inner
-            iteration count from the callback.
-        """
-        idx = np.flatnonzero(free)
-        if traj is not None:
-            traj.append(tuple(idx.tolist()))
-        x0 = x_guess[idx] if x_guess is not None else None
-        xf, lam, k_step = sub_solve(idx, x0)
-        x: Vector = np.zeros(n)
-        x[idx] = xf
-        return x, lam, k_step

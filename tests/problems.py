@@ -175,7 +175,7 @@ def make_adversarial(
 
     Returns:
         The pair ``(A, b)``. No optimum is planted; certify a solve with
-        :func:`nncg.solver.kkt_violation`.
+        :func:`nncg.certificate.kkt_violation`.
     """
     rng = np.random.default_rng(seed)
     m0 = rng.standard_normal((n, n // 2))

@@ -25,11 +25,21 @@ changes are overwritten on the next sync. Repo-owned files are `Makefile`,
 
 ## Layout
 
-- `src/nncg/solver.py` — the active-set loop (`ActiveSetSolver` and its
-  `ActiveSetConfig`, the `InnerSolver` protocol), the `Result` dataclass, and
-  the `kkt_violation` certificate.
+- `src/nncg/solver.py` — the active-set loop: `ActiveSetSolver` (the outer-loop
+  orchestrator) and its `ActiveSetConfig`, the `InnerSolver` protocol, and the
+  `Result` dataclass.
+- `src/nncg/_active_set.py` — the pure active-set primitives the loop is built
+  from: free-set seeding, the primal/dual violator split, the guarded batch/Bland
+  `_pivot`, and the `_drive` driver loop.
+- `src/nncg/_equality.py` — the equality-augmented `_saddle_solve` (the p-by-p
+  Schur-complement elimination behind `ActiveSetSolver.solve_eq`).
+- `src/nncg/certificate.py` — the public `kkt_violation` certificate and the
+  shared `_require_operator` precondition.
 - `src/nncg/inner.py` — the built-in inner solvers (`CG`, `Jacobi`, `Nystrom`,
-  `Exact`) and the preconditioner builders they use.
+  `Exact`).
+- `src/nncg/preconditioners.py` — the free-block operator and preconditioner
+  builders the inner solvers run on (`_free_matvec`, `_jacobi`, and the
+  randomized-Nyström machinery plus `NystromConfig`).
 - `src/nncg/api.py` — the one-call convenience wrappers `solve_nnqp` /
   `solve_nnqp_eq` over `ActiveSetSolver`; logic-free, they just wrap arrays in
   `DenseOperator` and resolve the `inner` string shortcut.
