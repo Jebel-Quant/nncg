@@ -49,8 +49,35 @@ changes are overwritten on the next sync. Repo-owned files are `Makefile`,
   the installed package; also intended for later experiments and notebooks.
 - `tests/` — the paper's numerical study as a test suite. Keep it that way:
   every mathematical claim in the paper that this package implements should
-  have a test here, and `tests/test_fallback.py` must keep the fallback path
-  exercised (it is the termination guarantee's load-bearing component).
+  have a test here, and the Bland/fallback path must stay exercised (currently
+  in `tests/test_nncg/test_solver.py`, driven by the adversarial anti-correlated
+  family in `tests/problems.py`) — it is the termination guarantee's load-bearing
+  component.
+
+## Test layout — an accepted deviation from Rhiza 1:1 parity
+
+The tests use an **intentional grouped layout**, not the Rhiza convention of one
+mirrored `tests/nncg/test_<module>.py` per `src/nncg/<module>.py` that the
+template's `scripts/check_test_layout.py` enforces:
+
+- `tests/test_nncg/` — behaviour tests grouped by concern (`test_api`,
+  `test_inner`, `test_krylov`, `test_solver`).
+- `tests/test_paper/` — the paper's numerical study (`test_cg_convergence`,
+  `test_conditioning`, `test_reduction`, `test_results`).
+- `tests/problems.py` — shared planted-optimum generators (see above).
+
+Several internal primitives (`_active_set.py`, `_equality.py`, `certificate.py`)
+have no dedicated 1:1 test file **by design**: they are the pieces the active-set
+loop is built from, so they are exercised end-to-end through
+`tests/test_nncg/test_solver.py` rather than in isolation. This keeps the suite
+organised around the paper's claims and the solver's observable behaviour.
+
+This is a **deliberate, accepted deviation** — treat it as by-design, not a gap.
+The layout gives full line coverage of every source module, and
+`check_test_layout.py` is not wired into any gate in this repo. If you add a new
+public entry point, add its tests to the matching grouped file (or a new one
+under `tests/test_nncg/` or `tests/test_paper/`); do not reshuffle the suite into
+per-module files to satisfy the parity check.
 
 ## Conventions
 
