@@ -6,6 +6,9 @@ matrix-free CG in :mod:`nncg.krylov` can call on the block ``A[F, F]``:
 :func:`_free_matvec` yields the block action ``v -> A[F, F] v``, and
 :func:`_jacobi` / :func:`_nystrom` yield the diagonal / randomized-Nyström
 preconditioners ``r -> M^{-1} r``. The reduced matrix is never materialised.
+:func:`_global_nystrom_sketch` / :func:`_masked_nystrom` are the same Nyström
+idea sketched once on the *full* operator and reused across free blocks by
+masking rows, rather than resketched per block (see :class:`nncg.inner.GlobalNystrom`).
 The inner-solver classes that select among these live in :mod:`nncg.inner`.
 """
 
@@ -247,6 +250,94 @@ def _nystrom(
     def apply(r: Vector) -> Vector:
         """Apply ``M^{-1}`` via the captured scalar shift plus low-rank correction."""
         z: Vector = inv_mu * r + u @ (coef * (u.T @ r))
+        return z
+
+    return apply
+
+
+@dataclass(frozen=True)
+class GlobalNystromSketch:
+    """A rank-``rank`` randomized Nyström sketch of the *full* operator ``A``.
+
+    Reusable across every free block the active-set loop visits — see
+    :func:`_masked_nystrom`.
+
+    Attributes:
+        u: The ``n x rank`` orthonormal sketch basis (of the full operator).
+        lam: The ``rank`` captured eigenvalues, descending.
+        mu: The scalar deflation shift for the uncaptured tail.
+    """
+
+    u: NDArray[np.float64]
+    lam: NDArray[np.float64]
+    mu: float
+
+
+def _global_nystrom_sketch(op: SymmetricOperator, config: NystromConfig = _DEFAULT_NYSTROM) -> GlobalNystromSketch:
+    """Sketch the full operator ``A`` once: ``A ~ U diag(lam) U^T + mu (I - U U^T)``.
+
+    Identical randomized-Nyström machinery to :func:`_nystrom`, but run on the
+    whole operator (``idx=None``) rather than a free block, so the result can be
+    masked down to any free block's rows via :func:`_masked_nystrom` without
+    resketching.
+
+    Args:
+        op: The SPD operator ``A``.
+        config: Sketch rank, oversampling, shift and seed.
+
+    Returns:
+        The captured basis, eigenvalues and tail shift.
+
+    Raises:
+        ValueError: When the smallest captured eigenvalue is negligible relative
+            to the largest (``config.rank`` exceeds the numerical rank of ``A``
+            — reduce it), or when an explicit ``config.shift`` is not positive.
+    """
+    rank, oversample, shift, seed = config.rank, config.oversample, config.shift, config.seed
+    n = op.n
+    rank = min(rank, n)
+    sketch = min(rank + max(oversample, 0), n)
+
+    u_full, lam_full = _nystrom_sketch(op.matvec, n, sketch, seed)
+    u = u_full[:, :rank]
+    lam = lam_full[:rank]
+    _check_captured(lam, rank)
+    mu = _nystrom_shift(shift, lam, lam_full, rank)
+    return GlobalNystromSketch(u=u, lam=lam, mu=mu)
+
+
+def _masked_nystrom(sketch: GlobalNystromSketch, idx: NDArray[np.int_]) -> Preconditioner:
+    """Return the Woodbury preconditioner for the free block ``A[F, F]``, from a global sketch.
+
+    Restricting a rank-``rank`` factorization to a principal submatrix is exact:
+    ``(U diag(lam) U^T + mu (I - U U^T))[F, F] = U_F diag(lam) U_F^T + mu (I_F -
+    U_F U_F^T) = mu I_F + U_F diag(lam - mu) U_F^T`` where ``U_F = U[F, :]`` — no
+    extra approximation beyond the global sketch's own error, and no matrix-free
+    products against the operator are needed here at all. ``U_F`` is not
+    orthonormal after masking though, so unlike :func:`_nystrom`'s specialised
+    identity-plus-projection inverse, ``M^{-1}`` is applied via the *general*
+    Sherman-Morrison-Woodbury identity ``(mu I + U_F C U_F^T)^{-1} = I/mu - U_F
+    (C^{-1} + U_F^T U_F / mu)^{-1} U_F^T / mu^2`` in ``O(|F| rank + rank^3)`` to
+    build, then ``O(|F| rank)`` per application — the ``rank x rank`` factor is
+    built once per free block, not once per CG iteration.
+
+    Args:
+        sketch: The global sketch of ``A`` from :func:`_global_nystrom_sketch`.
+        idx: Integer positions of the free set ``F``.
+
+    Returns:
+        A callable applying ``r -> M^{-1} r`` on the free block.
+    """
+    u_f = sketch.u[idx, :]
+    mu = sketch.mu
+    c_inv = 1.0 / (sketch.lam - mu)
+    gram = u_f.T @ u_f
+    k_inv = np.linalg.inv(np.diag(c_inv) + gram / mu)
+
+    def apply(r: Vector) -> Vector:
+        """Apply ``M^{-1}`` via the general Woodbury update on the masked basis."""
+        y = k_inv @ (u_f.T @ r)
+        z: Vector = r / mu - (u_f @ y) / mu**2
         return z
 
     return apply

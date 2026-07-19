@@ -51,7 +51,9 @@ $M$ — the $n \times n$ matrix is never formed and working memory is $O(n)$.
 
 Each free-block solve is delegated to a **pluggable inner solver** — plain CG
 (`CG`), Jacobi- or randomized-Nyström-preconditioned CG (`Jacobi`, `Nystrom`),
-or a direct factorisation (`Exact`) — so you match the inner solve to the
+a Nyström sketch built once on the full operator and reused across every free
+block (`GlobalNystrom` — pays off on repeated solves of the same operator), or
+a direct factorisation (`Exact`) — so you match the inner solve to the
 operator's structure without touching the outer loop. `ActiveSetSolver` owns the
 loop and knows nothing about preconditioning; new inner solvers plug in by
 implementing a one-method `InnerSolver` interface.
@@ -77,7 +79,7 @@ Q, _ = np.linalg.qr(rng.standard_normal((200, 200)))
 A = (Q * np.geomspace(1.0, 1e4, 200)) @ Q.T
 b = rng.standard_normal(200)
 
-res = solve_nnqp(A, b, inner="cg")         # inner solver: "cg" / "jacobi" / "nystrom" / "exact"
+res = solve_nnqp(A, b, inner="cg")         # inner solver: "cg" / "jacobi" / "nystrom" / "global_nystrom" / "exact"
 assert res.converged                       # stopped on the KKT certificate
 
 # equality-augmented: minimise subject to x >= 0 and B x = c
@@ -92,15 +94,18 @@ wrappers are logic-free shortcuts to exactly this:
 
 ```python
 from cvx.linalg import DenseOperator, GramOperator
-from nncg import ActiveSetSolver, CG, Jacobi, Nystrom, NystromConfig, kkt_violation
+from nncg import ActiveSetSolver, CG, GlobalNystrom, Jacobi, Nystrom, NystromConfig, kkt_violation
 
 op = DenseOperator(A)                       # kkt_violation takes a SymmetricOperator too
 solver = ActiveSetSolver(inner=CG())        # configure once, reuse across problems
 res = solver.solve(op, b)
 assert kkt_violation(op, b, res.x) < 1e-6   # zero certifies the global minimiser
 
-# warm-start a parametric sweep: support-stable steps take ONE outer step
-res2 = solver.solve(op, b + 1e-4, warm=(res.free, res.x))
+# warm-start a parametric sweep: support-stable steps take ONE outer step.
+# GlobalNystrom sketches `A` once (on the FIRST solve) and masks that one sketch to
+# each free block on every later solve — Nystrom would resketch A[F, F] every time.
+sweep_solver = ActiveSetSolver(inner=GlobalNystrom(nystrom=NystromConfig(rank=20)))
+res2 = sweep_solver.solve(op, b + 1e-4, warm=(res.free, res.x))
 
 # Gram-structured: A = M'M + I only through products with M — never formed.
 # Swap the inner solver freely — here Jacobi to strip the diagonal scaling.

@@ -20,6 +20,7 @@ from nncg import (
     CG,
     ActiveSetConfig,
     ActiveSetSolver,
+    GlobalNystrom,
     Jacobi,
     Nystrom,
     NystromConfig,
@@ -49,7 +50,10 @@ def test_solve_nnqp_default_inner_is_cg() -> None:
     np.testing.assert_array_equal(res.x, ref.x)
 
 
-@pytest.mark.parametrize(("name", "instance"), [("cg", CG()), ("jacobi", Jacobi()), ("nystrom", Nystrom())])
+@pytest.mark.parametrize(
+    ("name", "instance"),
+    [("cg", CG()), ("jacobi", Jacobi()), ("nystrom", Nystrom()), ("global_nystrom", GlobalNystrom())],
+)
 def test_inner_string_shortcut_equals_default_instance(name: str, instance: object) -> None:
     """A shortcut string default-constructs the matching inner solver."""
     a, b, _, _ = make_problem(60, 1e3, seed=2)
