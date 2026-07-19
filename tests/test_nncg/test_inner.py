@@ -5,7 +5,7 @@ import pytest
 from cvx.linalg import DenseOperator
 
 from nncg.krylov import KrylovConfig, pcg
-from nncg.preconditioners import NystromConfig, _free_matvec, _jacobi, _nystrom
+from nncg.preconditioners import NystromConfig, _free_matvec, _global_nystrom_sketch, _jacobi, _masked_nystrom, _nystrom
 from tests.problems import make_problem
 from tests.test_nncg.test_solver import _NoDiagOperator
 
@@ -159,3 +159,64 @@ def test_nystrom_rejects_non_positive_shift() -> None:
     a = _spd_with_spectrum(np.geomspace(1.0, 1e3, 10), seed=8)
     with pytest.raises(ValueError, match="shift must be positive"):
         _nystrom(DenseOperator(a), config=NystromConfig(rank=3, shift=-1.0, seed=0))
+
+
+# --------------------------------------------------------------------------
+# Global Nyström sketch, masked per free block
+# --------------------------------------------------------------------------
+
+
+def test_global_nystrom_masks_free_set_exactly() -> None:
+    """A sketch built once on the full operator, masked to ``idx``, solves that free block exactly."""
+    a = _spd_with_spectrum(np.concatenate([[1e6, 1e5, 1e4], np.geomspace(1.0, 1e2, 37)]), seed=9)
+    op = DenseOperator(a)
+    sketch = _global_nystrom_sketch(op, NystromConfig(rank=3, seed=0))
+    idx = np.arange(0, 40, 2)  # a 20-variable free block
+    a_ff = a[np.ix_(idx, idx)]
+    rhs = np.arange(1.0, idx.size + 1.0)
+    x, _ = pcg(lambda v: a_ff @ v, rhs, KrylovConfig(precond=_masked_nystrom(sketch, idx), tol=1e-8))
+    np.testing.assert_allclose(x, np.linalg.solve(a_ff, rhs), rtol=1e-6, atol=1e-8)
+
+
+def test_global_nystrom_one_sketch_serves_several_free_blocks() -> None:
+    """The same global sketch, masked differently, preconditions two distinct free blocks correctly."""
+    a = _spd_with_spectrum(np.concatenate([[1e7, 1e6, 1e5], np.geomspace(1.0, 1e2, 47)]), seed=11)
+    op = DenseOperator(a)
+    sketch = _global_nystrom_sketch(op, NystromConfig(rank=3, seed=0))
+    for idx in (np.arange(0, 30), np.arange(20, 50)):
+        a_ff = a[np.ix_(idx, idx)]
+        rhs = np.arange(1.0, idx.size + 1.0)
+        x, _ = pcg(lambda v, a_ff=a_ff: a_ff @ v, rhs, KrylovConfig(precond=_masked_nystrom(sketch, idx), tol=1e-8))
+        np.testing.assert_allclose(x, np.linalg.solve(a_ff, rhs), rtol=1e-6, atol=1e-8)
+
+
+def test_global_nystrom_beats_plain_cg_on_low_rank_spectrum() -> None:
+    """A global sketch's masked restriction deflates the free block as effectively as a fresh one.
+
+    Same spectrum and free block as :func:`test_nystrom_beats_plain_cg_on_low_rank_spectrum`,
+    but preconditioned from a full-operator sketch masked to ``idx``, not resketched on
+    the block itself.
+    """
+    a = _spd_with_spectrum(np.concatenate([[1e8, 1e7, 1e6], np.geomspace(1.0, 1e2, 97)]), seed=4)
+    idx = np.arange(a.shape[0])
+    a_ff = a[np.ix_(idx, idx)]
+    rhs = np.arange(1.0, idx.size + 1.0)
+    _, it_cg = pcg(lambda v: a_ff @ v, rhs, KrylovConfig(tol=1e-8))
+    sketch = _global_nystrom_sketch(DenseOperator(a), NystromConfig(rank=3, seed=0))
+    _, it_gn = pcg(lambda v: a_ff @ v, rhs, KrylovConfig(precond=_masked_nystrom(sketch, idx), tol=1e-8))
+    assert it_gn < it_cg / 2
+
+
+def test_global_nystrom_rejects_rank_above_numerical_rank() -> None:
+    """A sketch wider than the operator's rank captures a negligible eigenvalue."""
+    rng = np.random.default_rng(7)
+    m = rng.standard_normal((8, 2))  # A = M M^T has rank 2
+    with pytest.raises(ValueError, match="negligible eigenvalue"):
+        _global_nystrom_sketch(DenseOperator(m @ m.T), config=NystromConfig(rank=5, seed=0))
+
+
+def test_global_nystrom_rejects_non_positive_shift() -> None:
+    """An explicit non-positive shift is refused."""
+    a = _spd_with_spectrum(np.geomspace(1.0, 1e3, 10), seed=8)
+    with pytest.raises(ValueError, match="shift must be positive"):
+        _global_nystrom_sketch(DenseOperator(a), config=NystromConfig(rank=3, shift=-1.0, seed=0))

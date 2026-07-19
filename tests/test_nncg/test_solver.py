@@ -16,6 +16,7 @@ from nncg import (
     ActiveSetConfig,
     ActiveSetSolver,
     Exact,
+    GlobalNystrom,
     InnerSolver,
     Jacobi,
     Nystrom,
@@ -157,6 +158,46 @@ def test_nystrom_inner_matches_cg_trajectory() -> None:
         traj_cg = ActiveSetSolver(inner=CG(), config=ActiveSetConfig(track=True)).solve(op, b).traj
         traj_ny = ActiveSetSolver(config=ActiveSetConfig(track=True), inner=Nystrom()).solve(op, b).traj
         assert traj_cg == traj_ny
+
+
+def test_global_nystrom_inner_recovers_planted_optimum() -> None:
+    """The globally-sketched, per-block-masked Nyström inner solver reaches the same optimum as CG."""
+    a, b, x_star, _ = make_problem(80, 1e4, seed=1)
+    op = DenseOperator(a)
+    res = ActiveSetSolver(inner=GlobalNystrom(nystrom=NystromConfig(rank=15))).solve(op, b)
+    assert res.converged
+    assert np.max(np.abs(res.x - x_star)) < 1e-6
+    assert kkt_violation(op, b, res.x) < 1e-7 * (1.0 + float(np.linalg.norm(b)))
+
+
+def test_global_nystrom_inner_matches_cg_trajectory() -> None:
+    """Masking a global sketch per free block changes only inner cost, not the visited free sets."""
+    for seed in range(3):
+        a, b, _, _ = make_problem(60, 1e4, seed=seed)
+        op = DenseOperator(a)
+        traj_cg = ActiveSetSolver(inner=CG(), config=ActiveSetConfig(track=True)).solve(op, b).traj
+        traj_gn = ActiveSetSolver(config=ActiveSetConfig(track=True), inner=GlobalNystrom()).solve(op, b).traj
+        assert traj_cg == traj_gn
+
+
+def test_global_nystrom_sketches_full_operator_exactly_once() -> None:
+    """The global sketch is built once per operator, reused across every outer step.
+
+    Unlike :class:`Nystrom`, which resketches ``A[F, F]`` on every outer step, a
+    solve with several outer steps must call the global-sketch builder exactly
+    once — the point of masking a single sketch instead of resketching per block.
+    """
+    a, b, _, _ = make_problem(80, 1e4, seed=1)
+    op = DenseOperator(a)
+    inner = GlobalNystrom(nystrom=NystromConfig(rank=15))
+    res = ActiveSetSolver(inner=inner).solve(op, b)
+    assert res.outer > 1  # otherwise the memoisation claim is untested
+    assert inner._checked_op is op
+    # A second solve on a *different* operator must rebuild the sketch, not reuse the stale one.
+    a2, b2, _, _ = make_problem(80, 1e4, seed=2)
+    op2 = DenseOperator(a2)
+    ActiveSetSolver(inner=inner).solve(op2, b2)
+    assert inner._checked_op is op2
 
 
 def test_max_outer_cap_reports_nonconvergence() -> None:
@@ -539,6 +580,20 @@ def test_eq_nystrom_inner_recovers_optimum() -> None:
     assert r_ny.converged
     assert np.max(np.abs(r_ny.x - x_star)) < 1e-6
     assert np.linalg.norm(b_eq @ r_ny.x - c_eq) < 1e-9
+
+
+def test_eq_global_nystrom_inner_recovers_optimum() -> None:
+    """The globally-sketched eq solve recovers the same planted optimum.
+
+    Every one of the ``p + 1`` right-hand sides per saddle step, across every
+    outer step, is preconditioned from the *same* sketch of the full operator.
+    """
+    a, b, b_eq, c_eq, x_star, _, _ = make_eq_problem(80, 1e4, 3, seed=6)
+    inner = GlobalNystrom(nystrom=NystromConfig(rank=15))
+    r_gn = ActiveSetSolver(inner=inner).solve_eq(DenseOperator(a), b, b_eq, c_eq)
+    assert r_gn.converged
+    assert np.max(np.abs(r_gn.x - x_star)) < 1e-6
+    assert np.linalg.norm(b_eq @ r_gn.x - c_eq) < 1e-9
 
 
 def test_eq_pcg_beats_cg_under_diagonal_scaling() -> None:

@@ -4,12 +4,12 @@ Each concrete inner solver provides ``solve(op, idx, rhs, x0) -> (y, iters)``,
 solving the free-block system ``A[F, F] y = rhs`` (and so satisfies the
 :class:`nncg.solver.InnerSolver` interface). This is the only module that knows
 about preconditioning: the built-in solvers are the identity/Jacobi/Nyström-
-preconditioned CG variants (:class:`CG`, :class:`Jacobi`, :class:`Nystrom`) and
-the direct :class:`Exact`. The operator-derived builders they run on — the
-free-block matvec and the diagonal/Nyström preconditioners — live in
-:mod:`nncg.preconditioners`. Further inner solvers — e.g. Clarabel- or
-KKT-equation-based — live in Jebel-Quant/mean_variance_solvers and satisfy the
-same structural interface.
+preconditioned CG variants (:class:`CG`, :class:`Jacobi`, :class:`Nystrom`,
+:class:`GlobalNystrom`) and the direct :class:`Exact`. The operator-derived
+builders they run on — the free-block matvec and the diagonal/Nyström
+preconditioners — live in :mod:`nncg.preconditioners`. Further inner solvers —
+e.g. Clarabel- or KKT-equation-based — live in Jebel-Quant/mean_variance_solvers
+and satisfy the same structural interface.
 """
 
 from __future__ import annotations
@@ -21,9 +21,17 @@ from cvx.linalg import SymmetricOperator, Vector
 from numpy.typing import NDArray
 
 from .krylov import KrylovConfig, Preconditioner, pcg
-from .preconditioners import NystromConfig, _free_matvec, _jacobi, _nystrom
+from .preconditioners import (
+    GlobalNystromSketch,
+    NystromConfig,
+    _free_matvec,
+    _global_nystrom_sketch,
+    _jacobi,
+    _masked_nystrom,
+    _nystrom,
+)
 
-__all__ = ["CG", "Exact", "Jacobi", "Nystrom", "NystromConfig"]
+__all__ = ["CG", "Exact", "GlobalNystrom", "Jacobi", "Nystrom", "NystromConfig"]
 
 _RCOND_MIN = 1e-12  # matches cvx-linalg's DEFAULT_COND_THRESHOLD of 1e12
 
@@ -158,4 +166,55 @@ class Nystrom:
     def solve(self, op: SymmetricOperator, idx: NDArray[np.int_], rhs: Vector, x0: Vector | None) -> tuple[Vector, int]:
         """Solve the free block ``A[F, F] y = rhs`` by Nyström-preconditioned CG (plain CG on an empty block)."""
         precond = _nystrom(op, idx, self.nystrom) if idx.size else None
+        return _pcg_block(op, idx, rhs, x0, self.krylov, precond)
+
+
+@dataclass(frozen=True)
+class GlobalNystrom:
+    """Nyström-preconditioned CG sketched once on the full operator, then masked per free block.
+
+    :class:`Nystrom` resketches ``A[F, F]`` from scratch on every outer step —
+    the `rank + oversample` matrix-free products, a QR, a small Cholesky and an
+    SVD, all paid again each time the free set changes. This class instead
+    sketches the *full* operator ``A`` once: restricting a rank-``rank``
+    factorization to a principal submatrix is exact
+    (``(U diag(lam) U^T)[F, F] = U_F diag(lam) U_F^T`` for ``U_F = U[F, :]``),
+    so masking rows of the one global basis gives a valid free-block
+    preconditioner with no further matrix-free products against ``A`` — only a
+    small ``rank x rank`` factorization per free block (see
+    :func:`nncg.preconditioners._masked_nystrom`). This amortises well when the
+    same operator is solved repeatedly (a parameter sweep, successive warm
+    starts) or the active-set loop takes many outer steps; the trade is a
+    preconditioner not adapted to each free block's own local spectrum, so it
+    can take a few more CG iterations than a freshly-sketched :class:`Nystrom`
+    on a small or spectrally unusual free block.
+
+    The global sketch is memoised in a private single slot, keyed on operator
+    *identity* so the cache can never carry a stale sketch across operators
+    (mirrors :class:`Exact`'s conditioning memo) — excluded from equality/repr
+    so this class stays a value.
+
+    Attributes:
+        krylov: Tolerance and iteration cap of the CG solves (``tol`` defaults to ``1e-10``).
+        nystrom: Sketch rank, oversampling, shift and seed of the global sketch
+            (see :class:`nncg.preconditioners.NystromConfig`).
+    """
+
+    krylov: KrylovConfig = field(default_factory=_default_krylov)
+    nystrom: NystromConfig = field(default_factory=NystromConfig)
+    _checked_op: SymmetricOperator | None = field(default=None, compare=False, repr=False)
+    _sketch: GlobalNystromSketch | None = field(default=None, compare=False, repr=False)
+
+    def _ensure_sketch(self, op: SymmetricOperator) -> GlobalNystromSketch:
+        """Return the memoised global sketch of ``op``, (re)building it on a new operator."""
+        sketch = self._sketch
+        if self._checked_op is not op or sketch is None:
+            sketch = _global_nystrom_sketch(op, self.nystrom)
+            object.__setattr__(self, "_sketch", sketch)
+            object.__setattr__(self, "_checked_op", op)
+        return sketch
+
+    def solve(self, op: SymmetricOperator, idx: NDArray[np.int_], rhs: Vector, x0: Vector | None) -> tuple[Vector, int]:
+        """Solve the free block ``A[F, F] y = rhs`` by CG preconditioned from the masked global sketch."""
+        precond = _masked_nystrom(self._ensure_sketch(op), idx) if idx.size else None
         return _pcg_block(op, idx, rhs, x0, self.krylov, precond)

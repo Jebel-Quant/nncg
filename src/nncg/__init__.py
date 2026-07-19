@@ -15,7 +15,7 @@ import importlib.metadata
 
 from .api import InnerKind, solve_nnqp, solve_nnqp_eq
 from .certificate import kkt_violation
-from .inner import CG, Exact, Jacobi, Nystrom, NystromConfig
+from .inner import CG, Exact, GlobalNystrom, Jacobi, Nystrom, NystromConfig
 from .krylov import KrylovConfig
 from .solver import ActiveSetConfig, ActiveSetSolver, InnerSolver, Result
 
@@ -24,6 +24,7 @@ __all__ = [
     "ActiveSetConfig",
     "ActiveSetSolver",
     "Exact",
+    "GlobalNystrom",
     "InnerKind",
     "InnerSolver",
     "Jacobi",
