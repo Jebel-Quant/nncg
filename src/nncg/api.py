@@ -1,4 +1,4 @@
-"""One-call convenience entry points over the layered active-set API.
+"""One-call convenience entry points over the core solvers.
 
 :func:`solve_nnqp` and :func:`solve_nnqp_eq` compose the three pieces of the
 core API — wrap a plain SPD array in ``DenseOperator``, default-construct the
@@ -8,7 +8,9 @@ inner solver from a bare string, bundle the outer-loop knobs into an
 past them to ``ActiveSetSolver`` directly whenever you need to reuse a
 configured solver across problems, or an inner solver the string shortcut cannot
 express (``inner=Nystrom(nystrom=NystromConfig(rank=20))`` still works here,
-passed as an instance).
+passed as an instance). :func:`solve_nnqp_mprgp` is the matching one-call wrapper
+over the projection-based :class:`~nncg.mprgp.MPRGP` solver for the same
+bound-constrained problem.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ from cvx.linalg import DenseOperator, Matrix, SymmetricOperator, Vector
 from numpy.typing import NDArray
 
 from .inner import CG, Exact, GlobalNystrom, Jacobi, Nystrom
+from .mprgp import MPRGP, MPRGPConfig, MPRGPResult
 from .solver import ActiveSetConfig, ActiveSetSolver, InnerSolver, Result
 
 #: Bare-string shortcuts mapping to a default-constructed inner solver.
@@ -188,3 +191,59 @@ def solve_nnqp_eq(
     config = ActiveSetConfig(tol=tol, p_max=p_max, track=track, max_outer=max_outer)
     solver = ActiveSetSolver(inner=_resolve_inner(inner), config=config)
     return solver.solve_eq(_as_operator(a), b, b_eq, c_eq, warm=warm)
+
+
+def solve_nnqp_mprgp(
+    a: SymmetricOperator | NDArray[np.float64],
+    b: Vector,
+    *,
+    x0: Vector | None = None,
+    tol: float = 1e-8,
+    gamma: float = 1.0,
+    alpha_bar: float | None = None,
+    max_iter: int = 100_000,
+    seed: int = 0,
+) -> MPRGPResult:
+    """Minimise ``1/2 x^T A x - b^T x`` over ``x >= 0`` by MPRGP — one call.
+
+    The projection-based companion to :func:`solve_nnqp`: it solves the same
+    bound-constrained program with Dostál & Schöberl's MPRGP
+    (:class:`nncg.mprgp.MPRGP`) instead of the active-set loop — matrix-free and
+    factorisation-free, so it never forms or refactorises ``A``. Like
+    :func:`solve_nnqp` it wraps a plain SPD array in ``DenseOperator`` and bundles
+    the knobs into an :class:`nncg.mprgp.MPRGPConfig`, then delegates to
+    :meth:`nncg.mprgp.MPRGP.solve`. The equality-augmented variant is not covered
+    — use :func:`solve_nnqp_eq` for ``B x = c``.
+
+    Args:
+        a: The SPD quadratic term. A :class:`cvx.linalg.SymmetricOperator` is used
+            as-is; a plain 2-D array is wrapped in ``DenseOperator`` (the
+            matrix-free ``A = M^T M + ridge I`` path is *not* inferred — pass
+            ``GramOperator(M, ridge)`` explicitly for it).
+        b: The linear term ``b``.
+        x0: Optional feasible warm start, projected onto ``x >= 0``; ``None``
+            starts from the origin.
+        tol: Relative projected-gradient stopping tolerance
+            (``MPRGPConfig.tol``).
+        gamma: Proportioning constant ``Gamma > 0`` (``MPRGPConfig.gamma``).
+        alpha_bar: Fixed projected-gradient step in ``(0, 2/||A||]``; ``None``
+            estimates ``1/||A||`` matrix-free (``MPRGPConfig.alpha_bar``).
+        max_iter: Iteration cap; ``converged=False`` when hit
+            (``MPRGPConfig.max_iter``).
+        seed: Seed of the power-iteration ``||A||`` estimate
+            (``MPRGPConfig.seed``).
+
+    Returns:
+        An :class:`nncg.mprgp.MPRGPResult`; ``converged`` is True iff the
+        projected gradient fell below ``tol * ||b||``, which certifies the unique
+        global minimiser.
+
+    Raises:
+        TypeError: When ``a`` is neither a :class:`cvx.linalg.SymmetricOperator`
+            nor an array wrappable by ``DenseOperator``.
+        ValueError: When the operator dimension does not match ``len(b)``, when
+            ``gamma`` is not strictly positive, or when ``alpha_bar`` is set but
+            not strictly positive.
+    """
+    config = MPRGPConfig(tol=tol, gamma=gamma, alpha_bar=alpha_bar, max_iter=max_iter, seed=seed)
+    return MPRGP(config=config).solve(_as_operator(a), b, x0=x0)
