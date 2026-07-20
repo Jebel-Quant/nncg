@@ -22,8 +22,8 @@ import numpy as np
 from cvx.linalg import DenseOperator, Matrix, SymmetricOperator, Vector
 from numpy.typing import NDArray
 
-from .mprgp import MPRGP, MPRGPConfig, MPRGPResult
 from .inner import CG, Exact, GlobalNystrom, Jacobi, Nystrom
+from .mprgp import MPRGP, MPRGPConfig, MPRGPResult
 from .solver import ActiveSetConfig, ActiveSetSolver, InnerSolver, Result
 
 #: Bare-string shortcuts mapping to a default-constructed inner solver.
