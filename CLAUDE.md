@@ -37,6 +37,12 @@ changes are overwritten on the next sync. Repo-owned files are `Makefile`,
   shared `_require_operator` precondition.
 - `src/nncg/inner.py` — the built-in inner solvers (`CG`, `Jacobi`, `Nystrom`,
   `Exact`).
+- `src/nncg/mprgp.py` — MPRGP (Dostál & Schöberl), a standalone matrix-free
+  projection solver for the same bound-constrained `min_{x>=0} 1/2 x'Ax - b'x`:
+  `MPRGP` with its `MPRGPConfig`/`MPRGPResult`. A first-order alternative to the
+  active-set loop — conjugate-gradient / expansion / proportioning steps under
+  the proportioning test, no factorisation. Bound constraints only (the equality
+  variant needs a SMALBE/SMALSE outer wrap and is out of scope here).
 - `src/nncg/preconditioners.py` — the free-block operator and preconditioner
   builders the inner solvers run on (`_free_matvec`, `_jacobi`, and the
   randomized-Nyström machinery plus `NystromConfig`).
