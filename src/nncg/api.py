@@ -22,8 +22,8 @@ import numpy as np
 from cvx.linalg import DenseOperator, Matrix, SymmetricOperator, Vector
 from numpy.typing import NDArray
 
-from .inner import CG, Exact, Jacobi, Nystrom
 from .mprgp import MPRGP, MPRGPConfig, MPRGPResult
+from .inner import CG, Exact, GlobalNystrom, Jacobi, Nystrom
 from .solver import ActiveSetConfig, ActiveSetSolver, InnerSolver, Result
 
 #: Bare-string shortcuts mapping to a default-constructed inner solver.
@@ -31,10 +31,11 @@ _INNER: dict[str, Callable[[], InnerSolver]] = {
     "cg": CG,
     "jacobi": Jacobi,
     "nystrom": Nystrom,
+    "global_nystrom": GlobalNystrom,
     "exact": Exact,
 }
 
-InnerKind = Literal["cg", "jacobi", "nystrom", "exact"]
+InnerKind = Literal["cg", "jacobi", "nystrom", "global_nystrom", "exact"]
 """The bare-string shortcuts accepted for ``inner`` (keys of :data:`_INNER`)."""
 
 
@@ -110,7 +111,8 @@ def solve_nnqp(
         inner: The inner solver for each free block, as an
             :class:`nncg.inner.InnerSolver` instance (fully configurable — e.g.
             ``Nystrom(nystrom=NystromConfig(rank=20))``), or one of the shortcut
-            strings ``"cg"``, ``"jacobi"``, ``"nystrom"``, ``"exact"`` for its
+            strings ``"cg"``, ``"jacobi"``, ``"nystrom"``, ``"global_nystrom"``,
+            ``"exact"`` for its
             default configuration.
         warm: Optional ``(free_mask, x_prev)`` pair from a previous solve, forwarded
             to :meth:`ActiveSetSolver.solve` — see there for the warm-start semantics.

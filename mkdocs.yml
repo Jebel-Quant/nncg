@@ -35,7 +35,7 @@ nav:
     - Active-set methods: notebooks/01_active_set_methods.html
     - Equality constraints: notebooks/02_equality_constraints.html
     - Test problems: notebooks/03_test_problems.html
-    - Active-set vs MPRGP: notebooks/04_mprgp_vs_active_set.html
+    - Solver comparison: notebooks/04_solver_comparison.html
   - Reports:
     - Test report: reports/html-report/report.html
     - Coverage report: reports/html-coverage/index.html
