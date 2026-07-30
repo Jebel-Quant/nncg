@@ -1,7 +1,7 @@
-sha: e0fe02300840e39fe75d19db2741e9a790f87794
+sha: e5d7005e2d9fc3d5a23b96d13b203b4f2afe3cce
 repo: jebel-quant/rhiza
 host: github
-ref: v1.2.1
+ref: v1.2.5
 include: []
 exclude: []
 templates: []
@@ -51,7 +51,6 @@ files:
 - .rhiza/make.d/github.mk
 - .rhiza/make.d/marimo.mk
 - .rhiza/make.d/quality.mk
-- .rhiza/make.d/releasing.mk
 - .rhiza/make.d/test.mk
 - .rhiza/rhiza.mk
 - .rhiza/semgrep.yml
@@ -69,5 +68,5 @@ files:
 - docs/mkdocs-base.yml
 - pytest.ini
 - ruff.toml
-synced_at: '2026-07-17T06:41:25Z'
+synced_at: '2026-07-30T04:18:24Z'
 strategy: merge
