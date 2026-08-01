@@ -57,6 +57,14 @@ packages = ["src/nncg"]
 ignore-nested-functions = true
 ignore-nested-classes = true
 
+[tool.check_test_layout]
+# Accepted deviation from Rhiza's 1:1 mirroring — see the "Test layout" section
+# of CLAUDE.md for the full rationale. This table makes that decision
+# machine-readable so scripts/check_test_layout.py reports it as intentional
+# instead of as 18 missing/orphan files.
+enforce = false
+reason = "Tests are grouped by concern under tests/test_nncg/ and by paper claim under tests/test_paper/ rather than mirrored one-to-one onto src/nncg/; internal primitives (_active_set, _equality, certificate) are exercised end-to-end through test_solver.py by design, and full line coverage of every source module is guaranteed by the pytest coverage gate."
+
 [tool.deptry.package_module_name_map]
 numpy = "numpy"
 cvx-linalg = "cvx"

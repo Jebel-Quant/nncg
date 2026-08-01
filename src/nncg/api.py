@@ -134,6 +134,19 @@ def solve_nnqp(
         ValueError: When ``inner`` is a string outside the shortcut set, when the
             operator dimension does not match ``len(b)``, or on the inner solver's
             own conditions.
+
+    Examples:
+        The bound binds where the unconstrained minimiser would go negative. Here
+        ``A^-1 b = [1, -1]``, so the second coordinate is clamped to zero:
+
+        >>> import numpy as np
+        >>> a = np.array([[2.0, 0.0], [0.0, 2.0]])
+        >>> b = np.array([2.0, -2.0])
+        >>> result = solve_nnqp(a, b)
+        >>> result.converged
+        True
+        >>> result.x.round(6).tolist()
+        [1.0, 0.0]
     """
     config = ActiveSetConfig(tol=tol, p_max=p_max, track=track, max_outer=max_outer)
     solver = ActiveSetSolver(inner=_resolve_inner(inner), config=config)
@@ -187,6 +200,19 @@ def solve_nnqp_eq(
         ValueError: When ``inner`` is a string outside the shortcut set, when the
             operator dimension does not match ``len(b)``, or on the inner solver's
             own conditions.
+
+    Examples:
+        The ``p = 1`` normalisation ``1^T x = 1`` — the minimum-norm point on the
+        simplex, here its centre:
+
+        >>> import numpy as np
+        >>> a = np.eye(2) * 2.0
+        >>> b = np.zeros(2)
+        >>> result = solve_nnqp_eq(a, b, np.array([[1.0, 1.0]]), np.array([1.0]))
+        >>> result.converged
+        True
+        >>> result.x.round(6).tolist()
+        [0.5, 0.5]
     """
     config = ActiveSetConfig(tol=tol, p_max=p_max, track=track, max_outer=max_outer)
     solver = ActiveSetSolver(inner=_resolve_inner(inner), config=config)
@@ -244,6 +270,19 @@ def solve_nnqp_mprgp(
         ValueError: When the operator dimension does not match ``len(b)``, when
             ``gamma`` is not strictly positive, or when ``alpha_bar`` is set but
             not strictly positive.
+
+    Examples:
+        The same program as the :func:`solve_nnqp` example, reached by projection
+        instead of the active-set loop — same unique minimiser:
+
+        >>> import numpy as np
+        >>> a = np.array([[2.0, 0.0], [0.0, 2.0]])
+        >>> b = np.array([2.0, -2.0])
+        >>> result = solve_nnqp_mprgp(a, b)
+        >>> result.converged
+        True
+        >>> result.x.round(6).tolist()
+        [1.0, 0.0]
     """
     config = MPRGPConfig(tol=tol, gamma=gamma, alpha_bar=alpha_bar, max_iter=max_iter, seed=seed)
     return MPRGP(config=config).solve(_as_operator(a), b, x0=x0)

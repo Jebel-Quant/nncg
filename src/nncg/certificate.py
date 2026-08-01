@@ -48,6 +48,21 @@ def kkt_violation(a: SymmetricOperator, b: Vector, x: Vector) -> float:
         ``max`` of the negativity violations of ``x`` and of the reduced
         gradient ``s = A x - b``, and of the complementarity products
         ``|x_i s_i|``. Zero certifies the unique global minimiser.
+
+    Examples:
+        Note that ``a`` must be an operator — a bare array raises ``TypeError``:
+
+        >>> import numpy as np
+        >>> from cvx.linalg import DenseOperator
+        >>> a = DenseOperator(np.array([[2.0, 0.0], [0.0, 2.0]]))
+        >>> b = np.array([2.0, -2.0])
+
+        The minimiser certifies at zero, while the origin does not:
+
+        >>> round(kkt_violation(a, b, np.array([1.0, 0.0])), 12)
+        0.0
+        >>> kkt_violation(a, b, np.zeros(2)) > 0
+        True
     """
     _require_operator(a, b)
     s = a.matvec(x) - b
