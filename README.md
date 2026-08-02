@@ -118,6 +118,20 @@ assert res_g.converged
 res_n = ActiveSetSolver(inner=Nystrom(nystrom=NystromConfig(rank=20))).solve(op, b)
 ```
 
+The package also ships **MPRGP** (Dostál & Schöberl) as a first-order
+alternative for the bound-constrained problem: conjugate-gradient, expansion
+and proportioning steps under the proportioning test, no factorisation and no
+active-set combinatorics. It takes the same operator and returns the same
+kind of certificate, so the two are directly comparable — but it carries no
+finite-termination guarantee and handles bound constraints only (no `Bx = c`).
+
+```python
+from nncg import solve_nnqp_mprgp
+
+res_m = solve_nnqp_mprgp(A, b)              # or MPRGP(...).solve(op, b) for a reusable solver
+assert kkt_violation(op, b, res_m.x) < 1e-6 # same certificate as the active-set path
+```
+
 ## 🔬 The algorithm in one paragraph
 
 Fix a working set of *free* variables and solve the unconstrained reduced SPD
