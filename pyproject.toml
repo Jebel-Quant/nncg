@@ -51,6 +51,37 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/nncg"]
 
+[tool.bumpversion]
+# Lives in pyproject.toml because that is one of the four filenames
+# bump-my-version auto-discovers (.bumpversion.toml, .bumpversion.cfg,
+# setup.cfg, pyproject.toml). A block anywhere else is inert, and inert is
+# silent: with no config found the tool falls back to `git describe` and a
+# release can be cut at a version that already exists. This replaces the
+# `.rhiza/.cfg.toml` copy that rhiza v1.3.0 stopped shipping.
+#
+# No `current_version` and no [[tool.bumpversion.files]] entry for
+# [project].version: bump-my-version reads and rewrites the PEP 621 field
+# natively, so the number is declared exactly once, on line 3. Add a
+# [[tool.bumpversion.files]] entry only for an *additional* location — this
+# repo has none; CHANGELOG.md is regenerated, not rewritten in place.
+parse = "(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)(?:[-]?(?P<release>[a-z]+)[\\.]?(?P<pre_n>\\d+))?(?:\\+build\\.(?P<build_n>\\d+))?"
+serialize = [
+    "{major}.{minor}.{patch}-{release}.{pre_n}+build.{build_n}",
+    "{major}.{minor}.{patch}+build.{build_n}",
+    "{major}.{minor}.{patch}-{release}.{pre_n}",
+    "{major}.{minor}.{patch}",
+]
+allow_dirty = false
+# /rhiza:release commits and tags itself so the changelog lands in the bump
+# commit; a bare `bump-my-version bump` must not add a second commit or a
+# duplicate tag.
+commit = false
+tag = false
+
+[tool.bumpversion.parts.release]
+optional_value = "prod"
+values = ["dev", "alpha", "a", "beta", "b", "rc", "prod"]
+
 [tool.interrogate]
 # Nested helpers defined inside tests are throwaway implementation detail,
 # not documented API.
