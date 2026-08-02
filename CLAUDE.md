@@ -47,8 +47,9 @@ changes are overwritten on the next sync. Repo-owned files are `Makefile`,
   builders the inner solvers run on (`_free_matvec`, `_jacobi`, and the
   randomized-Nyström machinery plus `NystromConfig`).
 - `src/nncg/api.py` — the one-call convenience wrappers `solve_nnqp` /
-  `solve_nnqp_eq` over `ActiveSetSolver`; logic-free, they just wrap arrays in
-  `DenseOperator` and resolve the `inner` string shortcut.
+  `solve_nnqp_eq` over `ActiveSetSolver`, plus `solve_nnqp_mprgp` over `MPRGP`;
+  logic-free, they just wrap arrays in `DenseOperator` and resolve the `inner`
+  string shortcut.
 - `src/nncg/krylov.py` — plain and Jacobi-preconditioned CG, warm-startable.
 - `tests/problems.py` — planted-optimum generators, including the adversarial
   anti-correlated family that forces the Bland fallback. Deliberately outside
@@ -67,7 +68,7 @@ mirrored `tests/nncg/test_<module>.py` per `src/nncg/<module>.py` that the
 template's `scripts/check_test_layout.py` enforces:
 
 - `tests/test_nncg/` — behaviour tests grouped by concern (`test_api`,
-  `test_inner`, `test_krylov`, `test_solver`).
+  `test_inner`, `test_krylov`, `test_mprgp`, `test_solver`).
 - `tests/test_paper/` — the paper's numerical study (`test_cg_convergence`,
   `test_conditioning`, `test_reduction`, `test_results`).
 - `tests/problems.py` — shared planted-optimum generators (see above).
