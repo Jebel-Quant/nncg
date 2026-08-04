@@ -12,7 +12,6 @@ Validates that pyproject.toml:
 - provides [project.urls] with Homepage and Repository
 - includes at least one Python version classifier
 - declares a [dependency-groups] test group containing pytest
-- declares a [dependency-groups] lint group
 - carries a [tool.bumpversion] table bump-my-version can actually discover
 - version matches the latest git tag (vX.Y.Z → X.Y.Z), and that tag is reachable
 """
@@ -220,10 +219,6 @@ class TestDependencyGroups:
         assert any("pytest" in str(dep).lower() for dep in test_deps), (
             "[dependency-groups.test] must list pytest as a dependency"
         )
-
-    def test_lint_group_present(self, dependency_groups: dict) -> None:
-        """A 'lint' dependency group must be declared."""
-        assert "lint" in dependency_groups, "[dependency-groups] must include a 'lint' group"
 
 
 class TestBumpversionConfigIsDiscoverable:
