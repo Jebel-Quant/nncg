@@ -124,6 +124,47 @@ class ActiveSetSolver:
             or :class:`nncg.inner.Exact`.
         config: Outer-loop configuration (violator tolerance, patience,
             trajectory tracking, outer-step cap).
+
+    Examples:
+        ``A`` enters as an operator, never as a bare array:
+
+        >>> import numpy as np
+        >>> from cvx.linalg import DenseOperator
+        >>> from nncg import ActiveSetSolver, CG, kkt_violation
+        >>> a = DenseOperator(np.array([[2.0, 0.0], [0.0, 2.0]]))
+        >>> b = np.array([2.0, -2.0])
+
+        The unconstrained minimiser would be ``(1, -1)``, so the bound binds on
+        the second coordinate and the loop returns ``(1, 0)`` with that
+        coordinate active:
+
+        >>> res = ActiveSetSolver(inner=CG()).solve(a, b)
+        >>> res.converged
+        True
+        >>> bool(np.allclose(res.x, [1.0, 0.0]))
+        True
+        >>> res.free.tolist()
+        [True, False]
+
+        ``converged`` is the KKT exit, which :func:`nncg.kkt_violation` scores
+        independently — zero certifies the unique global minimiser:
+
+        >>> round(kkt_violation(a, b, res.x), 12)
+        0.0
+
+        Generic data never needs the Bland fallback; that it stayed dormant is
+        reported rather than assumed:
+
+        >>> res.fallback
+        0
+
+        Swap the inner solver freely — the outer loop is unchanged, and on this
+        problem so is the answer:
+
+        >>> from nncg import Exact
+        >>> direct = ActiveSetSolver(inner=Exact()).solve(a, b)
+        >>> bool(np.allclose(direct.x, res.x))
+        True
     """
 
     inner: InnerSolver

@@ -10,6 +10,44 @@ builders they run on — the free-block matvec and the diagonal/Nyström
 preconditioners — live in :mod:`nncg.preconditioners`. Further inner solvers —
 e.g. Clarabel- or KKT-equation-based — live in Jebel-Quant/mean_variance_solvers
 and satisfy the same structural interface.
+
+Examples:
+    The inner solver is the one thing that varies between these runs — the outer
+    loop, and the minimiser it certifies, are the same:
+
+    >>> import numpy as np
+    >>> from cvx.linalg import DenseOperator
+    >>> from nncg import CG, ActiveSetSolver, Exact, Jacobi
+    >>> a = DenseOperator(np.diag([1.0, 2.0, 4.0, 8.0]))
+    >>> b = np.array([1.0, 2.0, -4.0, -8.0])
+    >>> for inner in (CG(), Jacobi(), Exact()):
+    ...     res = ActiveSetSolver(inner=inner).solve(a, b)
+    ...     print(type(inner).__name__, res.converged, np.allclose(res.x, [1.0, 1.0, 0.0, 0.0]))
+    CG True True
+    Jacobi True True
+    Exact True True
+
+    The direct solver counts one inner "iteration" per solve, so it never spends
+    more than the number of outer steps:
+
+    >>> direct = ActiveSetSolver(inner=Exact()).solve(a, b)
+    >>> direct.inner <= direct.outer
+    True
+
+    The Nyström solvers sketch the free block at :attr:`NystromConfig.rank`, so
+    they belong on a problem larger than that rank and with a decaying spectrum
+    — here three orders of geometric decay, with a planted optimum on the even
+    coordinates:
+
+    >>> from nncg import GlobalNystrom, Nystrom
+    >>> d = 10.0 ** -np.linspace(0.0, 3.0, 40)
+    >>> x_star = np.where(np.arange(40) % 2 == 0, 1.0, 0.0)
+    >>> b = d * x_star - (1.0 - x_star)
+    >>> for inner in (Nystrom(), GlobalNystrom()):
+    ...     res = ActiveSetSolver(inner=inner).solve(DenseOperator(np.diag(d)), b)
+    ...     print(type(inner).__name__, res.converged, np.allclose(res.x, x_star))
+    Nystrom True True
+    GlobalNystrom True True
 """
 
 from __future__ import annotations

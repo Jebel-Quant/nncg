@@ -49,6 +49,13 @@ from .certificate import _require_operator
 MatVec = Callable[[Vector], Vector]
 """The action ``v -> A v`` of the SPD operator — MPRGP's only access to ``A``."""
 
+Iterate = tuple[Vector, Vector, Vector]
+"""The MPRGP iteration state ``(x, g, p)``: iterate, gradient ``A x - b``, CG direction.
+
+Every move consumes one state and returns the next, so the loop in :func:`_mprgp`
+carries no other mutable numerics — only the counters the result reports.
+"""
+
 
 def _free_gradient(x: Vector, g: Vector) -> Vector:
     """Free gradient ``phi``: the gradient on the free set, zero on the active set.
@@ -92,6 +99,119 @@ def _max_feasible_step(x: Vector, p: Vector) -> float:
     if not decreasing.any():
         return np.inf
     return float(np.min(x[decreasing] / p[decreasing]))
+
+
+def _initial_iterate(matvec: MatVec, b: Vector, x0: Vector | None) -> Iterate:
+    """Project the warm start onto ``x >= 0`` and seed the gradient and CG direction.
+
+    Args:
+        matvec: The action ``v -> A v`` of the SPD operator.
+        b: The linear term ``b``.
+        x0: Optional warm start, projected onto the feasible set; ``None`` starts
+            at the origin.
+
+    Returns:
+        The initial ``(x, g, p)``. Costs the one Hessian product of ``g = A x - b``.
+    """
+    x = np.zeros_like(b) if x0 is None else np.maximum(np.asarray(x0, dtype=np.float64), 0.0)
+    g = matvec(x) - b
+    return x, g, _free_gradient(x, g)
+
+
+def _stopping_threshold(b: Vector, tol: float) -> float:
+    """Absolute exit threshold ``tol * ||b||`` of the projected-gradient stopping test.
+
+    ``||b||`` is replaced by ``1`` when ``b = 0``, so the test stays meaningful on
+    the degenerate problem whose minimiser is the origin.
+    """
+    return tol * (float(np.linalg.norm(b)) or 1.0)
+
+
+def _cg_step(x: Vector, g: Vector, p: Vector, ap: Vector, p_ap: float, alpha: float) -> Iterate:
+    """Conjugate-gradient step: minimise within the current face, leaving it unchanged.
+
+    The caller has already checked ``alpha`` feasible, so no projection is needed
+    and the gradient updates linearly. The next direction is the new free gradient
+    made ``A``-conjugate to ``p`` by one Gram-Schmidt sweep. Costs no Hessian
+    product of its own — ``ap`` is the one the caller computed to form ``alpha``.
+    """
+    x = x - alpha * p
+    g = g - alpha * ap
+    phi = _free_gradient(x, g)
+    beta_gs = float(phi @ ap) / p_ap
+    return x, g, phi - beta_gs * p
+
+
+def _expansion_step(
+    matvec: MatVec,
+    b: Vector,
+    x: Vector,
+    g: Vector,
+    p: Vector,
+    ap: Vector,
+    alpha_f: float,
+    alpha_bar: float,
+) -> Iterate:
+    """Expansion step: walk to the nearest bound, then one projected-gradient move.
+
+    Taken when the conjugate-gradient step would leave the feasible set. The
+    iterate advances only as far as the bound (``alpha_f``) and then takes one
+    fixed-step ``alpha_bar`` projected-gradient move, which *adds* the newly
+    active constraints. The projection is non-linear, so the gradient is
+    recomputed rather than updated — the extra Hessian product this step costs —
+    and CG restarts from the new free gradient.
+    """
+    x_half = x - alpha_f * p
+    g = g - alpha_f * ap
+    phi_half = _free_gradient(x_half, g)
+    x = np.maximum(x_half - alpha_bar * phi_half, 0.0)
+    g = matvec(x) - b
+    return x, g, _free_gradient(x, g)
+
+
+def _proportioning_step(matvec: MatVec, x: Vector, g: Vector, beta: Vector) -> Iterate:
+    """Proportioning step: release active constraints along the chopped gradient.
+
+    Taken on a disproportional iterate. ``beta`` is non-positive on the active set
+    and zero on the free set, and the exact line minimiser along it has
+    ``alpha >= 0``, so the move points inward and stays feasible without a
+    projection — the gradient therefore updates linearly. Costs one Hessian
+    product; CG restarts afterwards.
+    """
+    ad = matvec(beta)
+    alpha = float(g @ beta) / float(beta @ ad)
+    x = x - alpha * beta
+    g = g - alpha * ad
+    return x, g, _free_gradient(x, g)
+
+
+def _proportional_step(matvec: MatVec, b: Vector, iterate: Iterate, alpha_bar: float) -> tuple[Iterate, int, str]:
+    """Take the conjugate-gradient or expansion move on a proportional iterate.
+
+    Forms the trial conjugate-gradient step and compares it with the largest
+    feasible step along ``p``: within the face it is a plain :func:`_cg_step`,
+    otherwise the face must change and :func:`_expansion_step` walks to the bound
+    and projects.
+
+    Args:
+        matvec: The action ``v -> A v`` of the SPD operator.
+        b: The linear term ``b``.
+        iterate: The current ``(x, g, p)``.
+        alpha_bar: The fixed projected-gradient step of the expansion move.
+
+    Returns:
+        The next ``(x, g, p)``, the Hessian products consumed (one for the
+        conjugate-gradient step, two for the expansion step), and which move was
+        taken — ``"cg"`` or ``"expansion"`` — for the result's step counters.
+    """
+    x, g, p = iterate
+    ap = matvec(p)
+    p_ap = float(p @ ap)
+    alpha_cg = float(g @ p) / p_ap
+    alpha_f = _max_feasible_step(x, p)
+    if alpha_cg <= alpha_f:
+        return _cg_step(x, g, p, ap, p_ap, alpha_cg), 1, "cg"
+    return _expansion_step(matvec, b, x, g, p, ap, alpha_f, alpha_bar), 2, "expansion"
 
 
 def _resolve_alpha_bar(a: SymmetricOperator, alpha_bar: float | None, seed: int) -> float:
@@ -210,6 +330,41 @@ class MPRGP:
     Attributes:
         config: Solver configuration (tolerance, proportioning constant,
             projected-gradient step, iteration cap, seed).
+
+    Examples:
+        The same operator interface as the active-set loop:
+
+        >>> import numpy as np
+        >>> from cvx.linalg import DenseOperator
+        >>> from nncg import MPRGP, MPRGPConfig, kkt_violation
+        >>> a = DenseOperator(np.array([[2.0, 0.0], [0.0, 2.0]]))
+        >>> b = np.array([2.0, -2.0])
+        >>> res = MPRGP().solve(a, b)
+        >>> res.converged
+        True
+        >>> bool(np.allclose(res.x, [1.0, 0.0]))
+        True
+        >>> round(kkt_violation(a, b, res.x), 12)
+        0.0
+
+        The counts break the run down by move, and always sum to
+        ``iterations``; ``hessian_products`` is the honest matrix-free cost —
+        at least one product per step, plus the initial gradient:
+
+        >>> res.iterations == res.cg_steps + res.expansion_steps + res.proportioning_steps
+        True
+        >>> res.hessian_products > res.iterations
+        True
+
+        Nothing is factorised, so the whole configuration is a handful of
+        scalars — here a tighter tolerance and an explicit projected-gradient
+        step, which skips the power-iteration estimate of ``1/||A||``:
+
+        >>> tight = MPRGP(config=MPRGPConfig(tol=1e-12, alpha_bar=0.5)).solve(a, b)
+        >>> tight.converged
+        True
+        >>> bool(np.allclose(tight.x, [1.0, 0.0]))
+        True
     """
 
     config: MPRGPConfig = _DEFAULT_MPRGP
@@ -253,8 +408,10 @@ def _mprgp(
     """Run the MPRGP iteration and assemble its :class:`MPRGPResult`.
 
     The pure algorithm behind :meth:`MPRGP.solve`: it takes the resolved operator
-    action and step bound and owns the whole loop — the projected-gradient
-    stopping test, the proportioning switch, and the three moves. Kept as a plain
+    action and step bound and owns the loop — the projected-gradient stopping
+    test and the proportioning switch — while the three moves themselves live in
+    :func:`_cg_step`, :func:`_expansion_step` and :func:`_proportioning_step`,
+    with the first two selected by :func:`_proportional_step`. Kept as a plain
     function (operator access reduced to ``matvec``) so the numerics can be
     exercised directly.
 
@@ -270,13 +427,11 @@ def _mprgp(
     Returns:
         The completed :class:`MPRGPResult`.
     """
-    x = np.zeros_like(b) if x0 is None else np.maximum(np.asarray(x0, dtype=np.float64), 0.0)
-    g = matvec(x) - b  # gradient A x - b
-    products = 1
-    p = _free_gradient(x, g)  # initial conjugate direction
-
-    stop = tol * (float(np.linalg.norm(b)) or 1.0)
-    cg_steps = expansion_steps = proportioning_steps = iterations = 0
+    x, g, p = _initial_iterate(matvec, b, x0)
+    products = 1  # the gradient A x - b of the initial iterate
+    stop = _stopping_threshold(b, tol)
+    counts = {"cg": 0, "expansion": 0, "proportioning": 0}
+    iterations = 0
     converged = False
 
     while iterations < max_iter:
@@ -289,50 +444,23 @@ def _mprgp(
 
         phi_tilde = _reduced_free_gradient(x, g, alpha_bar)
         if float(beta @ beta) <= gamma * gamma * float(phi_tilde @ phi):
-            # Proportional iterate: trial conjugate-gradient step along p.
-            ap = matvec(p)
-            products += 1
-            p_ap = float(p @ ap)
-            alpha_cg = float(g @ p) / p_ap
-            alpha_f = _max_feasible_step(x, p)
-            if alpha_cg <= alpha_f:
-                # The CG step stays feasible: minimise within the current face.
-                x = x - alpha_cg * p
-                g = g - alpha_cg * ap
-                phi_new = _free_gradient(x, g)
-                beta_gs = float(phi_new @ ap) / p_ap  # A-conjugacy (Gram-Schmidt)
-                p = phi_new - beta_gs * p
-                cg_steps += 1
-            else:
-                # Expansion: walk to the bound, then one projected-gradient step
-                # to add the newly active constraints; restart CG afterwards.
-                x_half = x - alpha_f * p
-                g = g - alpha_f * ap
-                phi_half = _free_gradient(x_half, g)
-                x = np.maximum(x_half - alpha_bar * phi_half, 0.0)
-                g = matvec(x) - b  # projection is non-linear: recompute the gradient
-                products += 1
-                p = _free_gradient(x, g)
-                expansion_steps += 1
+            # Proportional iterate: minimise within the face, or expand it.
+            (x, g, p), used, move = _proportional_step(matvec, b, (x, g, p), alpha_bar)
+            products += used
+            counts[move] += 1
         else:
-            # Disproportional iterate: proportioning step along the chopped
-            # gradient releases active constraints; restart CG afterwards.
-            d = beta
-            ad = matvec(d)
+            # Disproportional iterate: release constraints along the chopped gradient.
+            x, g, p = _proportioning_step(matvec, x, g, beta)
             products += 1
-            alpha_cg = float(g @ d) / float(d @ ad)
-            x = x - alpha_cg * d
-            g = g - alpha_cg * ad
-            p = _free_gradient(x, g)
-            proportioning_steps += 1
+            counts["proportioning"] += 1
 
     return MPRGPResult(
         x=x,
         iterations=iterations,
         hessian_products=products,
-        cg_steps=cg_steps,
-        expansion_steps=expansion_steps,
-        proportioning_steps=proportioning_steps,
+        cg_steps=counts["cg"],
+        expansion_steps=counts["expansion"],
+        proportioning_steps=counts["proportioning"],
         converged=converged,
         free=x > 0.0,
     )
