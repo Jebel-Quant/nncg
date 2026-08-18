@@ -119,6 +119,22 @@ def test_free_mask_matches_support() -> None:
     assert np.array_equal(res.free, x_star > 0)
 
 
+def test_kkt_violation_never_reports_negative_zero() -> None:
+    """A certified optimum scores +0.0, never -0.0.
+
+    All three terms of the certificate collapse to zero here, and `np.max`'s reduce
+    is free to hand back either signed zero of a tie -- it picks -0.0 on linux and
+    +0.0 on macOS. The two compare equal but do not print alike, which is enough to
+    split the docstring examples across platforms.
+    """
+    a = DenseOperator(np.array([[2.0, 0.0], [0.0, 2.0]]))
+    b = np.array([2.0, -2.0])
+    v = kkt_violation(a, b, np.array([1.0, 0.0]))
+    assert v == 0.0
+    assert not np.signbit(v)
+    assert repr(round(v, 12)) == "0.0"
+
+
 def test_exact_inner_matches_cg_trajectory() -> None:
     """CG and exact inner solves visit the same free sets (inexactness lemma)."""
     for seed in range(3):

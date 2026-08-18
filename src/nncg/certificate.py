@@ -66,8 +66,16 @@ def kkt_violation(a: SymmetricOperator, b: Vector, x: Vector) -> float:
     """
     _require_operator(a, b)
     s = a.matvec(x) - b
+    # The leading 0.0 is a floor on a quantity that is mathematically non-negative
+    # already, and it is there for the sign of zero rather than the magnitude: when
+    # every term is zero, `np.max(-s, initial=0.0)` may hand back -0.0 (its reduce
+    # path picks a different one of the two equal zeros on linux than on macOS), and
+    # `-0.0` compares equal to `0.0` but does not print the same. Python's `max`
+    # replaces its running best only on a strict `>`, so the +0.0 seeded here
+    # survives and the certificate reports one platform-independent zero.
     return float(
         max(
+            0.0,
             np.max(-x, initial=0.0),
             np.max(-s, initial=0.0),
             np.max(np.abs(x * s), initial=0.0),
