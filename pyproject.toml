@@ -48,6 +48,63 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/nncg"]
 
+[tool.rhiza-task]
+# Settings for the task runner that replaced the synced make layer in rhiza v1.4.0.
+# `.rhiza/rhiza.mk` and the ten fragments under `.rhiza/make.d/` are gone; the
+# root Makefile is now the shim `uvx rhiza-task shim > Makefile` emits, so `make
+# test` / `make fmt` / `make typecheck` still work and CLAUDE.md's instructions
+# still hold — they just delegate to the pinned CLI instead of to synced make.
+#
+# Read as layer 3 of rhiza-task's resolution order (defaults -> .rhiza/.env ->
+# pyproject.toml -> RHIZA_* environment). `.rhiza/.env` was itself template-owned
+# and the sync deleted it, so this table is now the only place the two overrides
+# it carried can live. Only entries that differ from the CLI's defaults belong
+# here; `uvx rhiza-task print <setting>` shows what one resolves to.
+
+# The retired `.rhiza/.env` set `MARIMO_FOLDER=book/marimo/notebooks`; the CLI
+# defaults to `docs/notebooks`. This is the load-bearing entry: `book` exports the
+# notebooks in this folder to docs/notebooks/*.html, which is exactly what
+# mkdocs.yml's Notebooks nav references, and rhiza_marimo.yml reads the setting via
+# `rhiza-task print marimo_folder` to build its notebook matrix. Left at the default
+# both would look at an empty `docs/notebooks`, export nothing, and leave five nav
+# entries pointing at pages that were never built.
+marimo-folder = "book/marimo/notebooks"
+
+# CLAUDE.md's "Test layout" section and [tool.check_test_layout].reason below both
+# justify this repo's grouped suite by saying full line coverage of every source
+# module is guaranteed by the coverage gate. Under the retired python.mk that gate
+# was `COVERAGE_FAIL_UNDER ?= 90`, which the repo never overrode — so the claim was
+# documented but not enforced, and 10 percentage points of it were free. The suite
+# measures 100% on every module today, so pinning the gate at 100 makes the two
+# statements one. The `test` task passes --cov-fail-under on the command line, which
+# would outrank a [tool.coverage.report] fail_under; this repo has no such table, so
+# there is nothing to keep in step.
+coverage-fail-under = 100
+
+# The retired python.mk had `TYPECHECKER ?= both`; the CLI defaults to `ty` alone,
+# so a bare migration would have dropped `mypy --strict` from this repo's typecheck
+# gate -- the one CLAUDE.md describes. `both` is also stricter here than it was under
+# make: the shell `case` let mypy's exit status win, so a ty failure could pass, where
+# the CLI raises on each run. Both checkers are clean on src/nncg at the time of this
+# migration, so nothing is being deferred by turning them both on.
+typechecker = "both"
+
+# The retired quality.mk pinned `RHIZA_CHECKS_VERSION ?= 0.2.1`; the CLI defaults to
+# v0.2.0, so a bare migration would have *downgraded* the conformance checks -- the
+# drift the pin exists to prevent. v0.2.2 is out; bumping to it is a separate upgrade
+# decision and not this migration's to make.
+pytest-rhiza = "pytest-rhiza @ git+https://github.com/Jebel-Quant/pytest-rhiza@v0.2.1"
+
+# Not set, on purpose:
+#   source-folder      -- the default `src` is already this repo's layout, and the
+#       retired `.rhiza/.env` pinned it to that same value.
+#   layers             -- `python` is detected from pyproject.toml, and this repo has
+#       no second language layer for the inference to get wrong.
+#   mkdocs-extra-packages -- the old root Makefile carried
+#       `MKDOCS_EXTRA_PACKAGES = --with 'mkdocstrings[python]'` for the api.md reference
+#       page; rhiza-task 0.3.1 makes mkdocstrings[python] the default, so the override
+#       is now redundant rather than lost. Restore it here if that default ever changes.
+
 [tool.bumpversion]
 # Lives in pyproject.toml because that is one of the four filenames
 # bump-my-version auto-discovers (.bumpversion.toml, .bumpversion.cfg,
