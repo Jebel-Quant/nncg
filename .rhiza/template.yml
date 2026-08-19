@@ -1,5 +1,19 @@
 repository: "jebel-quant/rhiza"
-ref: "v1.3.4"
+ref: "v1.4.2"
 
 profiles:
   - github-project
+
+# Template-owned paths this repo declines to sync. Written as destination paths and
+# matched by prefix, so a directory entry covers everything under it.
+exclude:
+  # Mutation and fuzzing runs are long, and neither gates a merge here: the suite is
+  # already held to 100% coverage and the solvers take no untrusted input.
+  - .github/workflows/rhiza_mutation.yml
+  - .github/workflows/rhiza_fuzzing.yml
+  # Community-management scaffolding for the mother repo. nncg is a single-purpose
+  # reference implementation of one paper; CLAUDE.md and the README are where its
+  # contributor guidance lives, and issues/discussions stay free-form.
+  - .github/CONFIG.md
+  - .github/DISCUSSION_TEMPLATE
+  - .github/ISSUE_TEMPLATE
