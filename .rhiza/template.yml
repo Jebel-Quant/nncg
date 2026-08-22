@@ -4,9 +4,18 @@ ref: "v1.5.0"
 profiles:
   - github-project
 
+templates:
+  # SECURITY.md, CODE_OF_CONDUCT.md and CONTRIBUTING.md. LICENSE is excluded below.
+  - legal
+
 # Template-owned paths this repo declines to sync. Written as destination paths and
 # matched by prefix, so a directory entry covers everything under it.
 exclude:
+  # The template's LICENSE. `legal` is synced for SECURITY.md and the community docs,
+  # but the licence text is this repository's own: the bundle ships MIT under
+  # "Copyright (c) 2025 Jebel Quant Research", which is not this repo's holder.
+  - LICENSE
+
   # Mutation and fuzzing runs are long, and neither gates a merge here: the suite is
   # already held to 100% coverage and the solvers take no untrusted input.
   - .github/workflows/rhiza_mutation.yml
