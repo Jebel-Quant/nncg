@@ -24,5 +24,3 @@ exclude:
   # reference implementation of one paper; CLAUDE.md and the README are where its
   # contributor guidance lives, and issues/discussions stay free-form.
   - .github/CONFIG.md
-  - .github/DISCUSSION_TEMPLATE
-  - .github/ISSUE_TEMPLATE
