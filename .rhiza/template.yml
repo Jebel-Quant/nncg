@@ -16,10 +16,6 @@ exclude:
   # "Copyright (c) 2025 Jebel Quant Research", which is not this repo's holder.
   - LICENSE
 
-  # Mutation and fuzzing runs are long, and neither gates a merge here: the suite is
-  # already held to 100% coverage and the solvers take no untrusted input.
-  - .github/workflows/rhiza_mutation.yml
-  - .github/workflows/rhiza_fuzzing.yml
   # Community-management scaffolding for the mother repo. nncg is a single-purpose
   # reference implementation of one paper; CLAUDE.md and the README are where its
   # contributor guidance lives, and issues/discussions stay free-form.
