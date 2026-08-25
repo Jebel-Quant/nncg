@@ -1,0 +1,41 @@
+{
+    "upload_type": "software",
+    "title": "nncg: Non-Negative Conjugate Gradients",
+    "description": "<p><code>nncg</code> solves the strictly convex non-negative quadratic program <em>min<sub>x &ge; 0</sub> 1/2 x'Ax - b'x</em> with <em>A</em> symmetric positive definite, and its equality-augmented variant <em>Bx = c</em>, by wrapping matrix-free conjugate gradients in a primal-dual active-set loop.</p><p>The working-set toggles are the principal pivots of the linear complementarity problem LCP(A, -b); guarding the fast block-pivot path with a least-index Bland fallback gives unconditional finite termination at the unique global minimiser, with no non-degeneracy assumption. The package also ships MPRGP (Dost&aacute;l &amp; Sch&ouml;berl) as a first-order, factorisation-free alternative on the same bound-constrained problem.</p><p>This is the reference implementation of the paper <em>Non-Negative Conjugate Gradients</em> (Schmelzer &amp; Stoll); its test suite is the paper's numerical study.</p>",
+    "creators": [
+        {
+            "name": "Schmelzer, Thomas",
+            "affiliation": "Jebel Quant Research"
+        },
+        {
+            "name": "Stoll, Martin",
+            "affiliation": "TU Chemnitz"
+        }
+    ],
+    "license": "mit",
+    "access_right": "open",
+    "language": "eng",
+    "keywords": [
+        "conjugate gradients",
+        "active set method",
+        "non-negative least squares",
+        "quadratic programming",
+        "linear complementarity problem",
+        "matrix-free methods",
+        "MPRGP",
+        "numerical linear algebra",
+        "Python"
+    ],
+    "related_identifiers": [
+        {
+            "identifier": "https://github.com/Jebel-Quant/mean_variance_solvers",
+            "relation": "isSupplementTo",
+            "resource_type": "publication-report"
+        },
+        {
+            "identifier": "https://jebel-quant.github.io/nncg/",
+            "relation": "isDocumentedBy",
+            "resource_type": "publication-softwaredocumentation"
+        }
+    ]
+}
