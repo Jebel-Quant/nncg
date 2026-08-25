@@ -10,7 +10,7 @@
 [![CodeFactor](https://www.codefactor.io/repository/github/jebel-quant/nncg/badge)](https://www.codefactor.io/repository/github/jebel-quant/nncg)
 [![Rhiza](https://img.shields.io/badge/dynamic/yaml?url=https%3A%2F%2Fraw.githubusercontent.com%2FJebel-Quant%2Fnncg%2Fmain%2F.rhiza%2Ftemplate.yml&query=%24.ref&label=rhiza)](https://github.com/jebel-quant/rhiza)
 [![Paper](https://img.shields.io/badge/paper-Non--Negative_Conjugate_Gradients-red?logo=adobeacrobatreader)](https://github.com/Jebel-Quant/mean_variance_solvers)
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22096407.svg)](https://doi.org/10.5281/zenodo.22096407)
+[![DOI](https://zenodo.org/badge/1287501827.svg)](https://doi.org/10.5281/zenodo.22096407)
 
 ---
 
