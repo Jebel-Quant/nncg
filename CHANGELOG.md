@@ -5,6 +5,67 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com),
 and entries are generated from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.5.1] - 2026-08-25
+
+### New Features
+- *(inner)* Add GlobalNystrom — sketch A once, mask per free block (#62)
+- MPRGP solver + active-set comparison notebook (#63)
+
+### Bug Fixes
+- *(certificate)* Report +0.0 for a certified optimum on every platform (#91)
+
+### Documentation
+- Record grouped test layout as accepted Rhiza deviation (#59) (#61)
+
+### Maintenance
+- *(tests)* Consolidate suite into tests/test_nncg mirroring src modules (#37)
+- *(paper)* Pin paper claims not covered by the existing suite (#38)
+- *(solver)* Split _run pivot logic into helpers (#39) (#40)
+- Chore(deps)(deps): bump the github-actions group with 6 updates (#41)
+- Update rhiza to v1.1.0 (#45)
+- *(solver,inner)* Reduce _run and _nystrom complexity (#46) (#48)
+- *(solver)* Assert the max_outer contract instead of a magic count (#47) (#49)
+- *(inner)* Reduce Exact to A complexity (#43) (#50)
+- Update rhiza to v1.1.2 (#51)
+- *(inner,krylov)* Extract helpers to drop B-ranked blocks to grade A (#52) (#53)
+- Update rhiza to v1.1.3 (#54)
+- *(solver,inner)* Extract cohesive modules to lift maintainability (#55) (#56)
+- Chore(deps-dev)(deps-dev): bump the python-dependencies group with 3 updates (#57)
+- Update rhiza to v1.2.1 (#58)
+- Chore(deps-dev)(deps-dev): bump the python-dependencies group with 2 updates (#65)
+- Chore(deps)(deps): bump the github-actions group with 13 updates (#64)
+- *(pyproject)* Modernize Python version and license metadata (#66)
+- Chore(deps-dev)(deps-dev): bump the python-dependencies group with 2 updates (#68)
+- Chore(deps)(deps): bump docker/login-action in the github-actions group (#67)
+- Update rhiza to v1.2.5 (#69)
+- Update rhiza to v1.3.0 (#75)
+- Chore(deps-dev)(deps-dev): bump the python-dependencies group with 2 updates (#80)
+- Chore(deps)(deps): bump the github-actions group with 3 updates (#79)
+- Update rhiza to v1.3.2 (#82)
+- *(ci)* Bump the rhiza pin to v1.3.3 (#84)
+- Update rhiza to v1.3.3 (#85)
+- Chore(deps)(deps): bump the github-actions group with 2 updates (#83)
+- *(mprgp)* Extract the three moves, and document the solvers by example (#88)
+- *(mprgp)* Extract the three moves, and document the solvers by example (#89)
+- Update rhiza to v1.3.4 (#90)
+- Update rhiza to v1.4.2 and migrate the make layer to rhiza-task (#92)
+- Delete the excluded rhiza stubs instead of freezing them (#94)
+- Update rhiza to v1.5.0 (#95)
+- Prune exclude entries the template no longer ships (#96)
+- Sync the legal bundle, keeping this repo's LICENSE (#97)
+- Drop the exclude entries for the retired mutation/fuzzing workflows (#98)
+- Update rhiza to v1.6.0 (#99)
+- Add .zenodo.json for the Zenodo GitHub release archive (#101)
+
+### Other Changes
+- Show the CodeFactor grade in the README (#70)
+- Document the grouped test layout and add public-API doctests (#74)
+- Restore a discoverable bumpversion config in pyproject.toml (#76)
+- Render the full public API in docs/api.md (#78)
+- Drop the redundant lint dependency group (#81)
+- Delete .github/ISSUE_TEMPLATE directory
+- Delete .github/DISCUSSION_TEMPLATE directory (#93)
+
 ## [0.5.0] - 2026-07-06
 
 ### New Features
@@ -12,6 +73,9 @@ and entries are generated from [Conventional Commits](https://www.conventionalco
 
 ### Documentation
 - Fix stale inner-solver references in solver.py docstrings (#36)
+
+### Other Changes
+- Bump version 0.4.2 → 0.5.0
 
 ## [0.4.2] - 2026-07-06
 
@@ -97,6 +161,9 @@ and entries are generated from [Conventional Commits](https://www.conventionalco
 
 ### Performance
 - Hoist the free-set restriction out of the inner CG loop
+
+### Maintenance
+- Bump cvx-linalg to >=0.9.6
 
 ### Other Changes
 - Expose warm-starting in solve_nnqp_eq
