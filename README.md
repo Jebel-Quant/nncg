@@ -10,6 +10,7 @@
 [![CodeFactor](https://www.codefactor.io/repository/github/jebel-quant/nncg/badge)](https://www.codefactor.io/repository/github/jebel-quant/nncg)
 [![Rhiza](https://img.shields.io/badge/dynamic/yaml?url=https%3A%2F%2Fraw.githubusercontent.com%2FJebel-Quant%2Fnncg%2Fmain%2F.rhiza%2Ftemplate.yml&query=%24.ref&label=rhiza)](https://github.com/jebel-quant/rhiza)
 [![Paper](https://img.shields.io/badge/paper-Non--Negative_Conjugate_Gradients-red?logo=adobeacrobatreader)](https://github.com/Jebel-Quant/mean_variance_solvers)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22096407.svg)](https://doi.org/10.5281/zenodo.22096407)
 
 ---
 
@@ -147,7 +148,21 @@ working set and loops forever.
 
 ## 📖 Citation
 
-If you use this package in academic work, please cite the paper:
+If you use this package in academic work, please cite both the software and
+the paper. The software is archived on Zenodo; the DOI below is the *concept*
+DOI, which always resolves to the latest release:
+
+```bibtex
+@software{nncg,
+  title     = {nncg: Non-Negative Conjugate Gradients},
+  author    = {Schmelzer, Thomas and Stoll, Martin},
+  doi       = {10.5281/zenodo.22096407},
+  url       = {https://doi.org/10.5281/zenodo.22096407},
+  publisher = {Zenodo},
+}
+```
+
+and the paper:
 
 ```bibtex
 @techreport{schmelzer2026nncg,
