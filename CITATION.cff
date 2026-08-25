@@ -8,6 +8,11 @@ authors:
   - family-names: Stoll
     given-names: Martin
 repository-code: "https://github.com/Jebel-Quant/nncg"
+doi: 10.5281/zenodo.22096407
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.22096407
+    description: "Concept DOI — always resolves to the latest archived release."
 license: MIT
 preferred-citation:
   type: report
