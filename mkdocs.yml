@@ -9,8 +9,6 @@ docs_dir: docs
 
 theme:
   name: material
-  logo: assets/rhiza-logo.svg
-  favicon: assets/rhiza-logo.svg
 
 # Restated from the base config (INHERIT replaces list-valued keys wholesale)
 # to add `paths: [src]` — the book builds in an isolated uvx environment where
