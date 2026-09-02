@@ -81,13 +81,13 @@ Q, _ = np.linalg.qr(rng.standard_normal((200, 200)))
 A = (Q * np.geomspace(1.0, 1e4, 200)) @ Q.T
 b = rng.standard_normal(200)
 
-res = solve_nnqp(A, b, inner="cg")         # inner solver: "cg" / "jacobi" / "nystrom" / "global_nystrom" / "exact"
-assert res.converged                       # stopped on the KKT certificate
+res = solve_nnqp(A, b, inner="cg")  # inner solver: "cg" / "jacobi" / "nystrom" / "global_nystrom" / "exact"
+assert res.converged  # stopped on the KKT certificate
 
 # equality-augmented: minimise subject to x >= 0 and B x = c
-B = np.ones((1, 200))                      # p = 1: the budget 1'x = 1
+B = np.ones((1, 200))  # p = 1: the budget 1'x = 1
 res_eq = solve_nnqp_eq(A, b, B, np.array([1.0]), inner="jacobi")
-assert res_eq.lam.shape == (1,)            # multiplier, via a p-by-p Schur solve
+assert res_eq.lam.shape == (1,)  # multiplier, via a p-by-p Schur solve
 ```
 
 For reuse across a parametric sweep, a matrix-free Gram operator, or a tuned
@@ -98,10 +98,10 @@ wrappers are logic-free shortcuts to exactly this:
 from cvx.linalg import DenseOperator, GramOperator
 from nncg import ActiveSetSolver, CG, GlobalNystrom, Jacobi, Nystrom, NystromConfig, kkt_violation
 
-op = DenseOperator(A)                       # kkt_violation takes a SymmetricOperator too
-solver = ActiveSetSolver(inner=CG())        # configure once, reuse across problems
+op = DenseOperator(A)  # kkt_violation takes a SymmetricOperator too
+solver = ActiveSetSolver(inner=CG())  # configure once, reuse across problems
 res = solver.solve(op, b)
-assert kkt_violation(op, b, res.x) < 1e-6   # zero certifies the global minimiser
+assert kkt_violation(op, b, res.x) < 1e-6  # zero certifies the global minimiser
 
 # warm-start a parametric sweep: support-stable steps take ONE outer step.
 # GlobalNystrom sketches `A` once (on the FIRST solve) and masks that one sketch to
@@ -129,8 +129,8 @@ finite-termination guarantee and handles bound constraints only (no `Bx = c`).
 ```python
 from nncg import solve_nnqp_mprgp
 
-res_m = solve_nnqp_mprgp(A, b)              # or MPRGP(...).solve(op, b) for a reusable solver
-assert kkt_violation(op, b, res_m.x) < 1e-6 # same certificate as the active-set path
+res_m = solve_nnqp_mprgp(A, b)  # or MPRGP(...).solve(op, b) for a reusable solver
+assert kkt_violation(op, b, res_m.x) < 1e-6  # same certificate as the active-set path
 ```
 
 ## 🔬 The algorithm in one paragraph
