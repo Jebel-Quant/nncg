@@ -198,8 +198,9 @@ def solve_nnqp_eq(
         TypeError: When ``a`` is neither a :class:`cvx.linalg.SymmetricOperator`
             nor an array wrappable by ``DenseOperator``.
         ValueError: When ``inner`` is a string outside the shortcut set, when the
-            operator dimension does not match ``len(b)``, or on the inner solver's
-            own conditions.
+            operator dimension does not match ``len(b)``, when ``b_eq`` is not of
+            shape ``(p, n)`` or ``c_eq`` not of shape ``(p,)``, or on the inner
+            solver's own conditions.
 
     Examples:
         The ``p = 1`` normalisation ``1^T x = 1`` — the minimum-norm point on the

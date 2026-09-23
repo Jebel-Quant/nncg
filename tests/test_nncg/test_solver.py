@@ -448,6 +448,45 @@ def test_p_one_is_the_single_normalisation() -> None:
     assert abs(float(res.x.sum()) - float(beta[0])) < 1e-9
 
 
+@pytest.mark.parametrize(
+    ("b_eq", "c_eq", "match"),
+    [
+        (np.ones((1, 3)), np.array([1.0]), r"b_eq must have shape \(p, 4\), got \(1, 3\)"),
+        (np.ones(4), np.array([1.0]), r"b_eq must have shape \(p, 4\), got \(4,\)"),
+        (np.ones((1, 4)), np.array([1.0, 2.0]), r"c_eq must have shape \(1,\) .* got \(2,\)"),
+    ],
+)
+def test_eq_shape_mismatch_is_rejected(b_eq: np.ndarray, c_eq: np.ndarray, match: str) -> None:
+    """A mis-shaped ``B`` or ``c`` raises a ValueError naming the shapes, before any solve."""
+    a = DenseOperator(np.eye(4) * 2.0)
+    with pytest.raises(ValueError, match=match):
+        ActiveSetSolver(inner=CG()).solve_eq(a, np.ones(4), b_eq, c_eq)
+
+
+def test_eq_inconsistent_rank_deficient_b_is_not_certified() -> None:
+    """A rank-deficient ``B`` with inconsistent ``c`` passes KKT but is returned unconverged.
+
+    Two identical rows demand ``1^T x = 1`` and ``1^T x = 2`` at once: the
+    problem is infeasible, the Schur complement is singular, and the loop's KKT
+    exit alone would certify a point with ``B x != c``.
+    """
+    a = DenseOperator(np.eye(4) * 2.0)
+    b_eq = np.vstack([np.ones(4), np.ones(4)])
+    res = ActiveSetSolver(inner=CG()).solve_eq(a, np.ones(4), b_eq, np.array([1.0, 2.0]))
+    assert not res.converged
+    assert np.max(np.abs(b_eq @ res.x - np.array([1.0, 2.0]))) > 1e-3
+
+
+def test_eq_consistent_rank_deficient_b_still_converges() -> None:
+    """A rank-deficient but consistent ``B`` is feasible, so the solve stays certified."""
+    a = DenseOperator(np.eye(4) * 2.0)
+    b_eq = np.vstack([np.ones(4), np.ones(4)])
+    c_eq = np.array([1.0, 1.0])
+    res = ActiveSetSolver(inner=CG()).solve_eq(a, np.ones(4), b_eq, c_eq)
+    assert res.converged
+    assert np.max(np.abs(b_eq @ res.x - c_eq)) < 1e-8
+
+
 def test_eq_solver_accepts_gram_operator() -> None:
     """The equality-augmented loop runs matrix-free on a Gram operator."""
     m, b, x_star = _plant_gram_problem(30, 60, ridge=1.0, seed=4)

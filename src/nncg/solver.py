@@ -22,7 +22,7 @@ ridge)`` for ``A = M^T M + ridge I`` so the ``n x n`` matrix is never formed.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Protocol
 
 import numpy as np
@@ -30,7 +30,7 @@ from cvx.linalg import Matrix, SymmetricOperator, Vector
 from numpy.typing import NDArray
 
 from ._active_set import ReducedGradient, SubSolve, _drive
-from ._equality import _saddle_solve
+from ._equality import _eq_feasible, _require_eq_shapes, _saddle_solve
 from .certificate import _require_operator
 
 
@@ -91,7 +91,8 @@ class Result:
             direct inner solve counts as one.
         fallback: Number of least-index Bland fallback pivots taken.
         converged: True when the KKT exit was reached; False when an
-            ``max_outer`` cap stopped the loop first.
+            ``max_outer`` cap stopped the loop first, or (equality-augmented
+            solves) when the final iterate violates ``B x = c``.
         free: Boolean mask of the final free set.
         lam: Multipliers of the equality constraints (equality-augmented
             solves only; None otherwise).
@@ -255,17 +256,23 @@ class ActiveSetSolver:
         Returns:
             A :class:`Result` with the multipliers in ``lam``. The reduced
             gradient underlying the dual test is ``s = A x - b - B^T lam``.
+            ``converged`` additionally requires ``max|B x - c| <= tol *
+            max(1, max|c|)``: a rank-deficient ``B`` with an inconsistent ``c``
+            can pass the KKT test while infeasible, and is returned with
+            ``converged=False`` rather than certified.
 
         Raises:
             TypeError: When ``a`` is not a :class:`cvx.linalg.SymmetricOperator`.
-            ValueError: When the operator dimension does not match ``len(b)``, or
-                on the inner solver's own conditions in
+            ValueError: When the operator dimension does not match ``len(b)``,
+                when ``b_eq`` is not of shape ``(p, n)`` or ``c_eq`` not of shape
+                ``(p,)``, or on the inner solver's own conditions in
                 :meth:`InnerSolver.solve`.
             NotImplementedError: When a diagonal-preconditioned inner solver
                 (:class:`nncg.inner.Jacobi`) meets a backend without ``diag``
                 (propagated from ``cvx.linalg``).
         """
         _require_operator(a, b)
+        _require_eq_shapes(b_eq, c_eq, len(b))
 
         def sub_solve(idx: NDArray[np.int_], x0: Vector | None) -> tuple[Vector, Vector | None, int]:
             """Solve the saddle system on the free set via the p-by-p Schur complement."""
@@ -276,7 +283,10 @@ class ActiveSetSolver:
             correction = b_eq.T @ lam if lam is not None else np.zeros_like(b)
             return a.matvec(x) - b - correction
 
-        return self._run(len(b), sub_solve, reduced_gradient, warm)
+        result = self._run(len(b), sub_solve, reduced_gradient, warm)
+        if result.converged and not _eq_feasible(b_eq, c_eq, result.x, self.config.tol):
+            return replace(result, converged=False)
+        return result
 
     def _run(
         self,
