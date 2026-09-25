@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
+from typing import NamedTuple
 
 import numpy as np
 from cvx.linalg import Vector
@@ -23,6 +24,34 @@ SubSolve = Callable[[NDArray[np.int_], "Vector | None"], "tuple[Vector, Vector |
 
 ReducedGradient = Callable[["Vector", "Vector | None"], "Vector"]
 """Reduced gradient of the subproblem: ``(x, lam) -> s``."""
+
+
+class _DriveOutcome(NamedTuple):
+    """Raw outcome of :func:`_drive`, field for field what :class:`nncg.solver.Result` carries.
+
+    Named rather than positional so the caller cannot silently swap the three
+    adjacent ``int`` counters. Kept here, not in :mod:`nncg.solver`, so this
+    module need not depend on :class:`~nncg.solver.Result`.
+
+    Attributes:
+        x: Final iterate.
+        outer: Outer (active-set) steps taken.
+        inner: Total inner iterations across all subproblem solves.
+        fallback: Number of least-index Bland fallback pivots fired.
+        converged: Whether KKT was certified before the outer cap.
+        free: Final free mask.
+        lam: Equality multipliers from the last subproblem (None if bound-only).
+        traj: Visited free-set trajectory when tracked, else None.
+    """
+
+    x: Vector
+    outer: int
+    inner: int
+    fallback: int
+    converged: bool
+    free: NDArray[np.bool_]
+    lam: Vector | None
+    traj: list[tuple[int, ...]] | None
 
 
 def _init_active_set(n: int, warm: tuple[NDArray[np.bool_], Vector] | None) -> tuple[NDArray[np.bool_], Vector | None]:
@@ -152,7 +181,7 @@ def _drive(
     sub_solve: SubSolve,
     reduced_gradient: ReducedGradient,
     warm: tuple[NDArray[np.bool_], Vector] | None,
-) -> tuple[Vector, int, int, int, bool, NDArray[np.bool_], Vector | None, list[tuple[int, ...]] | None]:
+) -> _DriveOutcome:
     """Run the guarded primal-dual active-set loop and return its raw outcome.
 
     Owns everything the termination proof depends on: the primal and dual
@@ -160,8 +189,8 @@ def _drive(
     counter and the least-index Bland fallback (:func:`_pivot`). What is solved
     on each free set enters through ``sub_solve``, with ``reduced_gradient``
     supplying the matching dual test quantity; the thresholds come straight from
-    :class:`nncg.solver.ActiveSetConfig`. Returns a plain tuple so this module
-    need not depend on :class:`nncg.solver.Result` — the caller wraps it.
+    :class:`nncg.solver.ActiveSetConfig`. Returns a :class:`_DriveOutcome` so this
+    module need not depend on :class:`nncg.solver.Result` — the caller wraps it.
 
     Args:
         tol: Violator tolerance of the primal and dual KKT tests.
@@ -175,7 +204,7 @@ def _drive(
         warm: Optional ``(free_mask, x_prev)`` pair from a previous solve.
 
     Returns:
-        ``(x, outer, inner_total, fallback, converged, free, lam, traj)``.
+        A :class:`_DriveOutcome` with the final iterate, counters and free set.
     """
     free, x_guess, traj, cap = _init_run_state(n, track, max_outer, warm)
     x: Vector = np.zeros(n)
@@ -198,4 +227,13 @@ def _drive(
     else:
         converged = False  # outer cap reached without certifying KKT
 
-    return x, outer, inner_total, fallback, converged, free, lam, traj
+    return _DriveOutcome(
+        x=x,
+        outer=outer,
+        inner=inner_total,
+        fallback=fallback,
+        converged=converged,
+        free=free,
+        lam=lam,
+        traj=traj,
+    )
