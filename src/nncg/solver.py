@@ -322,16 +322,14 @@ class ActiveSetSolver:
             A :class:`Result`; ``lam`` is whatever the last subproblem returned.
         """
         cfg = self.config
-        x, outer, inner_total, fallback, converged, free, lam, traj = _drive(
-            cfg.tol, cfg.p_max, cfg.track, cfg.max_outer, n, sub_solve, reduced_gradient, warm
-        )
+        out = _drive(cfg.tol, cfg.p_max, cfg.track, cfg.max_outer, n, sub_solve, reduced_gradient, warm)
         return Result(
-            x=x,
-            outer=outer,
-            inner=inner_total,
-            fallback=fallback,
-            converged=converged,
-            free=free,
-            lam=lam,
-            traj=traj,
+            x=out.x,
+            outer=out.outer,
+            inner=out.inner,
+            fallback=out.fallback,
+            converged=out.converged,
+            free=out.free,
+            lam=out.lam,
+            traj=out.traj,
         )
