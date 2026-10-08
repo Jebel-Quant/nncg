@@ -72,7 +72,7 @@ def _saddle_solve(
     except np.linalg.LinAlgError:
         # Rank-deficient B_F: take the least-squares multipliers and leave the
         # verdict on B x = c to _eq_feasible rather than crashing the solve.
-        lam = np.linalg.lstsq(schur, rhs, rcond=None)[0]
+        lam = np.asarray(np.linalg.lstsq(schur, rhs, rcond=None)[0], dtype=np.float64)
     xf = v0 + v1 @ lam  # x_F = A_F^{-1}(b_F + B_F^T lambda)
     return xf, lam, k0 + k_cols
 
