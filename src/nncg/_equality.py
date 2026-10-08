@@ -40,6 +40,9 @@ def _saddle_solve(
     (the ``v0`` column warm-started at ``x0``, the ``v1`` columns cold), forms the
     SPD Schur complement ``S = B_F A_F^{-1} B_F^T`` and recovers the multipliers
     from ``S lambda = c - B_F v0`` before back-substituting ``x_F = v0 + v1 lambda``.
+    When ``B_F`` is rank-deficient ``S`` is singular and the multipliers fall back
+    to the least-squares solution; the caller's feasibility check then decides
+    whether ``B x = c`` actually holds.
 
     Args:
         inner: The inner solver driving each free-block solve.
@@ -62,8 +65,14 @@ def _saddle_solve(
     for j in range(p):
         v1[:, j], kj = inner.solve(a, idx, b_f[j], None)
         k_cols += kj
-    schur = b_f @ v1  # p-by-p Schur complement, SPD
-    lam = cholesky_solve(schur, c_eq - b_f @ v0)
+    schur = b_f @ v1  # p-by-p Schur complement, SPD when B_F has full row rank
+    rhs = c_eq - b_f @ v0
+    try:
+        lam = cholesky_solve(schur, rhs)
+    except np.linalg.LinAlgError:
+        # Rank-deficient B_F: take the least-squares multipliers and leave the
+        # verdict on B x = c to _eq_feasible rather than crashing the solve.
+        lam = np.asarray(np.linalg.lstsq(schur, rhs, rcond=None)[0], dtype=np.float64)
     xf = v0 + v1 @ lam  # x_F = A_F^{-1}(b_F + B_F^T lambda)
     return xf, lam, k0 + k_cols
 
