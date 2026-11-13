@@ -224,15 +224,15 @@ wheels = [
 
 [[package]]
 name = "cvx-linalg"
-version = "1.1.2"
+version = "1.1.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/99/85/9315f75dfb1f901f8c224c5d9bdff455c5c4a3a7ae4c5847126e29ddd93f/cvx_linalg-1.1.2.tar.gz", hash = "sha256:4c1497147af11986a34bfeb5e2972052730952e167679ef0aea6d7b630ba7c56", size = 43880, upload-time = "2026-10-01T07:27:22.565Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5b/bf/a2d32e50767c72c39fd108a9487ee36ea1bf8c50b40feb61b029831dda0c/cvx_linalg-1.1.3.tar.gz", hash = "sha256:f85e92894942e8f143e8eb8c930979d5b6d7bd165155919583f319c97d24a7aa", size = 43877, upload-time = "2026-11-04T07:04:38.623Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/14/1c/9be411ebfce2a73c09644cdc459456ac876ea3c1599b0ebe000ba7ba07ca/cvx_linalg-1.1.2-py3-none-any.whl", hash = "sha256:a852a5a73566cd92fca8d36c0230c19e9e14cde30c6e60097293aef446785b49", size = 57279, upload-time = "2026-10-01T07:27:21.299Z" },
+    { url = "https://files.pythonhosted.org/packages/aa/a9/19e078040aaf1ef10d5007b032c1392dffb167d3f1b54b4324c327e9ebdf/cvx_linalg-1.1.3-py3-none-any.whl", hash = "sha256:f76067ab49ea5ff12087f0011cbc44106a1e7d0a6c6e4e9d3617e4f5ee89ec9d", size = 57277, upload-time = "2026-11-04T07:04:37.309Z" },
 ]
 
 [[package]]
