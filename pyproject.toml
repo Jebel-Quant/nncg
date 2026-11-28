@@ -34,7 +34,7 @@ dev = [
     "matplotlib>=3.8",  # notebooks plot with matplotlib (book/marimo/notebooks/)
 ]
 test = [
-    "pytest>=7.0",
+    "pytest>=9.1.1",
     "pytest-timeout>=2.3",
 ]
 

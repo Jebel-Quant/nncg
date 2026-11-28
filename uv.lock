@@ -772,7 +772,7 @@ dev = [
     { name = "matplotlib", specifier = ">=3.8" },
 ]
 test = [
-    { name = "pytest", specifier = ">=7.0" },
+    { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-timeout", specifier = ">=2.3" },
 ]
 
